@@ -9,11 +9,11 @@ INSERT INTO categories (name, description, created_at, updated_at) VALUES
 ('Engineering', 'Engineering disciplines and technical studies', NOW(), NOW());
 
 -- Insert Demo Users (password: password123)
-INSERT INTO users (name, email, password, role, nim, jurusan, address, created_at, updated_at) VALUES
-('Demo Admin', 'admin@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', 'ADM001', 'Computer Science', 'Universitas Dumai Campus', NOW(), NOW()),
-('Demo User', 'user@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', 'USR001', 'Information Technology', 'Dumai, Riau', NOW(), NOW()),
-('John Smith', 'john.smith@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', '12345001', 'Computer Science', 'Pekanbaru, Riau', NOW(), NOW()),
-('Sarah Johnson', 'sarah.johnson@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', '12345002', 'Mathematics', 'Dumai, Riau', NOW(), NOW());
+INSERT INTO users (name, email, password_hash, role, nim, jurusan, created_at, updated_at) VALUES
+('Demo Admin', 'admin@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', 'ADM001', 'Computer Science', NOW(), NOW()),
+('Demo User', 'user@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', 'USR001', 'Information Technology', NOW(), NOW()),
+('John Smith', 'john.smith@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', '12345001', 'Computer Science', NOW(), NOW()),
+('Sarah Johnson', 'sarah.johnson@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', '12345002', 'Mathematics', NOW(), NOW());
 
 -- Insert Sample Books
 INSERT INTO books (title, author, publisher, published_year, isbn, subject, language, pages, summary, file_url, created_at, updated_at) VALUES
