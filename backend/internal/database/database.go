@@ -39,6 +39,11 @@ func Connect(config *configs.Config) error {
 
 // Migrate runs database migrations
 func Migrate() error {
+	// Skip auto-migration since we have a proper database schema
+	// that's initialized by Docker with the database_schema.sql file
+	// This prevents conflicts with existing indexes and tables
+	
+	/*
 	err := DB.AutoMigrate(
 		&models.User{},
 		&models.Book{},
@@ -55,8 +60,9 @@ func Migrate() error {
 	if err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
+	*/
 
-	log.Println("Database migration completed successfully")
+	log.Println("Database migration skipped - using existing schema")
 	return nil
 }
 

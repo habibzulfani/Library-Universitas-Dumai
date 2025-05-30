@@ -105,19 +105,19 @@ func (suite *BooksTestSuite) createTestUsers() {
 	// Create admin user with proper password hash
 	hashedPassword := suite.hashPassword("password123")
 	adminUser := models.User{
-		Email:    "admin@test.com",
-		Name:     "Test Admin",
-		Password: hashedPassword,
-		Role:     "admin",
+		Email:        "admin@test.com",
+		Name:         "Test Admin",
+		PasswordHash: hashedPassword,
+		Role:         "admin",
 	}
 	suite.db.Create(&adminUser)
 
 	// Create regular user
 	regularUser := models.User{
-		Email:    "user@test.com",
-		Name:     "Test User",
-		Password: hashedPassword,
-		Role:     "user",
+		Email:        "user@test.com",
+		Name:         "Test User",
+		PasswordHash: hashedPassword,
+		Role:         "user",
 	}
 	suite.db.Create(&regularUser)
 
@@ -131,30 +131,30 @@ func (suite *BooksTestSuite) createTestUsers() {
 
 func (suite *BooksTestSuite) createTestBooks() {
 	stringPtr := func(s string) *string { return &s }
-	int64Ptr := func(i int64) *int64 { return &i }
+	intPtr := func(i int) *int { return &i }
 
 	books := []models.Book{
 		{
 			Title:         "Test Book 1",
 			Author:        "Author 1",
 			Publisher:     stringPtr("Publisher 1"),
-			PublishedYear: int64Ptr(2023),
+			PublishedYear: intPtr(2023),
 			ISBN:          stringPtr("978-1234567890"),
 			Subject:       stringPtr("Computer Science"),
 			Language:      stringPtr("English"),
-			Pages:         int64Ptr(300),
-			Summary:       stringPtr("First test book summary"),
+			Pages:         intPtr(300),
+			Summary:       stringPtr("A test book"),
 		},
 		{
 			Title:         "Test Book 2",
 			Author:        "Author 2",
 			Publisher:     stringPtr("Publisher 2"),
-			PublishedYear: int64Ptr(2022),
+			PublishedYear: intPtr(2022),
 			ISBN:          stringPtr("978-0987654321"),
 			Subject:       stringPtr("Mathematics"),
 			Language:      stringPtr("English"),
-			Pages:         int64Ptr(250),
-			Summary:       stringPtr("Second test book summary"),
+			Pages:         intPtr(250),
+			Summary:       stringPtr("Another test book"),
 		},
 	}
 
@@ -211,10 +211,10 @@ func (suite *BooksTestSuite) TestCreateBook_Success() {
 		Title:         "New Test Book",
 		Author:        "New Author",
 		Publisher:     &[]string{"New Publisher"}[0],
-		PublishedYear: &[]int64{2024}[0],
+		PublishedYear: &[]int{2024}[0],
 		Subject:       &[]string{"Science"}[0],
 		Language:      &[]string{"English"}[0],
-		Pages:         &[]int64{400}[0],
+		Pages:         &[]int{400}[0],
 		Summary:       &[]string{"A new test book summary"}[0],
 	}
 

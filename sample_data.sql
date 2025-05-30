@@ -15,12 +15,13 @@ INSERT INTO categories (name, description, created_at, updated_at) VALUES
 ('Biology', 'Biological sciences and life sciences', NOW(), NOW());
 
 -- Insert Demo Users (passwords are hashed for 'password123')
-INSERT INTO users (name, email, password, role, nim, jurusan, address, created_at, updated_at) VALUES
-('Demo Admin', 'admin@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', 'ADM001', 'Computer Science', 'Universitas Dumai Campus', NOW(), NOW()),
-('Demo User', 'user@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', 'USR001', 'Information Technology', 'Dumai, Riau', NOW(), NOW()),
-('John Smith', 'john.smith@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', '12345001', 'Computer Science', 'Pekanbaru, Riau', NOW(), NOW()),
-('Sarah Johnson', 'sarah.johnson@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', '12345002', 'Mathematics', 'Dumai, Riau', NOW(), NOW()),
-('Dr. Ahmad Rahman', 'ahmad.rahman@demo.com', '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'user', NULL, 'Computer Science', 'Universitas Dumai', NOW(), NOW());
+-- Note: Using password_hash column as defined in database schema
+INSERT INTO users (name, email, password_hash, role, nim, jurusan, created_at, updated_at) VALUES
+('Demo Admin', 'admin@demo.com', '$2a$14$u15QwylXiPB63SV4ZeudTOEsRwu7awCrWgkb8WyzppA1vFi8/yJoq', 'admin', 'ADM001', 'Computer Science', NOW(), NOW()),
+('Demo User', 'user@demo.com', '$2a$14$u15QwylXiPB63SV4ZeudTOEsRwu7awCrWgkb8WyzppA1vFi8/yJoq', 'user', 'USR001', 'Information Technology', NOW(), NOW()),
+('John Smith', 'john.smith@demo.com', '$2a$14$u15QwylXiPB63SV4ZeudTOEsRwu7awCrWgkb8WyzppA1vFi8/yJoq', 'user', '12345001', 'Computer Science', NOW(), NOW()),
+('Sarah Johnson', 'sarah.johnson@demo.com', '$2a$14$u15QwylXiPB63SV4ZeudTOEsRwu7awCrWgkb8WyzppA1vFi8/yJoq', 'user', '12345002', 'Mathematics', NOW(), NOW()),
+('Dr. Ahmad Rahman', 'ahmad.rahman@demo.com', '$2a$14$u15QwylXiPB63SV4ZeudTOEsRwu7awCrWgkb8WyzppA1vFi8/yJoq', 'user', NULL, 'Computer Science', NOW(), NOW());
 
 -- Insert Sample Books (matching actual table structure)
 INSERT INTO books (title, author, publisher, published_year, isbn, subject, language, pages, summary, file_url, created_at, updated_at) VALUES
@@ -109,38 +110,38 @@ INSERT INTO user_papers (user_id, paper_id, created_at) VALUES
 (5, 2, NOW()),
 (5, 7, NOW());
 
--- Insert Activity Logs
-INSERT INTO activity_logs (user_id, action, target_type, target_id, created_at) VALUES
-(2, 'view', 'book', 1, NOW() - INTERVAL 1 DAY),
-(2, 'download', 'book', 1, NOW() - INTERVAL 1 DAY),
-(2, 'view', 'paper', 1, NOW() - INTERVAL 2 HOUR),
-(3, 'view', 'book', 3, NOW() - INTERVAL 3 HOUR),
-(3, 'view', 'paper', 1, NOW() - INTERVAL 1 HOUR),
-(4, 'view', 'book', 4, NOW() - INTERVAL 5 HOUR),
-(4, 'download', 'paper', 4, NOW() - INTERVAL 2 HOUR),
-(5, 'view', 'book', 8, NOW() - INTERVAL 6 HOUR),
-(5, 'view', 'paper', 2, NOW() - INTERVAL 30 MINUTE);
+-- Insert Activity Logs (using correct column names: item_id, item_type)
+INSERT INTO activity_logs (user_id, action, item_id, item_type, created_at) VALUES
+(2, 'view', 1, 'book', NOW() - INTERVAL 1 DAY),
+(2, 'download', 1, 'book', NOW() - INTERVAL 1 DAY),
+(2, 'view', 1, 'paper', NOW() - INTERVAL 2 HOUR),
+(3, 'view', 3, 'book', NOW() - INTERVAL 3 HOUR),
+(3, 'view', 1, 'paper', NOW() - INTERVAL 1 HOUR),
+(4, 'view', 4, 'book', NOW() - INTERVAL 5 HOUR),
+(4, 'download', 4, 'paper', NOW() - INTERVAL 2 HOUR),
+(5, 'view', 8, 'book', NOW() - INTERVAL 6 HOUR),
+(5, 'view', 2, 'paper', NOW() - INTERVAL 30 MINUTE);
 
--- Insert Download Records
-INSERT INTO downloads (user_id, target_type, target_id, created_at) VALUES
-(2, 'book', 1, NOW() - INTERVAL 1 DAY),
-(2, 'paper', 1, NOW() - INTERVAL 3 HOUR),
-(3, 'book', 3, NOW() - INTERVAL 5 HOUR),
-(4, 'paper', 4, NOW() - INTERVAL 2 HOUR),
-(5, 'book', 8, NOW() - INTERVAL 4 HOUR);
+-- Insert Download Records (using correct column names: item_id, item_type, downloaded_at)
+INSERT INTO downloads (user_id, item_id, item_type, downloaded_at) VALUES
+(2, 1, 'book', NOW() - INTERVAL 1 DAY),
+(2, 1, 'paper', NOW() - INTERVAL 3 HOUR),
+(3, 3, 'book', NOW() - INTERVAL 5 HOUR),
+(4, 4, 'paper', NOW() - INTERVAL 2 HOUR),
+(5, 8, 'book', NOW() - INTERVAL 4 HOUR);
 
--- Insert some file upload records
+-- Insert some file upload records (using correct column names)
 INSERT INTO file_uploads (filename, original_name, file_path, file_size, mime_type, uploaded_by, created_at) VALUES
 ('intro_algorithms.pdf', 'Introduction to Algorithms.pdf', '/uploads/books/intro_algorithms.pdf', 15728640, 'application/pdf', 1, NOW()),
 ('clean_code.pdf', 'Clean Code.pdf', '/uploads/books/clean_code.pdf', 8388608, 'application/pdf', 1, NOW()),
 ('ml_academic_prediction.pdf', 'Machine Learning Applications in Academic Performance Prediction.pdf', '/uploads/papers/ml_academic_prediction.pdf', 5242880, 'application/pdf', 3, NOW()),
 ('db_optimization.pdf', 'Database Query Optimization.pdf', '/uploads/papers/db_optimization.pdf', 7340032, 'application/pdf', 4, NOW());
 
--- Add some recent activity for better demo
-INSERT INTO activity_logs (user_id, action, target_type, target_id, created_at) VALUES
-(2, 'search', 'book', NULL, NOW() - INTERVAL 10 MINUTE),
-(3, 'search', 'paper', NULL, NOW() - INTERVAL 5 MINUTE),
+-- Add some recent activity for better demo (using NULL for item_id when not applicable)
+INSERT INTO activity_logs (user_id, action, item_id, item_type, created_at) VALUES
+(2, 'search', NULL, NULL, NOW() - INTERVAL 10 MINUTE),
+(3, 'search', NULL, NULL, NOW() - INTERVAL 5 MINUTE),
 (4, 'login', NULL, NULL, NOW() - INTERVAL 15 MINUTE),
-(5, 'view', 'book', 1, NOW() - INTERVAL 2 MINUTE);
+(5, 'view', 1, 'book', NOW() - INTERVAL 2 MINUTE);
 
 COMMIT; 

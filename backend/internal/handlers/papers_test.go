@@ -105,19 +105,19 @@ func (suite *PapersTestSuite) createTestUsers() {
 	// Create admin user with proper password hash
 	hashedPassword := suite.hashPassword("password123")
 	adminUser := models.User{
-		Email:    "admin@test.com",
-		Name:     "Test Admin",
-		Password: hashedPassword,
-		Role:     "admin",
+		Email:        "admin@test.com",
+		Name:         "Test Admin",
+		PasswordHash: hashedPassword,
+		Role:         "admin",
 	}
 	suite.db.Create(&adminUser)
 
 	// Create regular user
 	regularUser := models.User{
-		Email:    "user@test.com",
-		Name:     "Test User",
-		Password: hashedPassword,
-		Role:     "user",
+		Email:        "user@test.com",
+		Name:         "Test User",
+		PasswordHash: hashedPassword,
+		Role:         "user",
 	}
 	suite.db.Create(&regularUser)
 
@@ -131,7 +131,7 @@ func (suite *PapersTestSuite) createTestUsers() {
 
 func (suite *PapersTestSuite) createTestPapers() {
 	stringPtr := func(s string) *string { return &s }
-	int64Ptr := func(i int64) *int64 { return &i }
+	intPtr := func(i int) *int { return &i }
 
 	papers := []models.Paper{
 		{
@@ -140,7 +140,7 @@ func (suite *PapersTestSuite) createTestPapers() {
 			Advisor:    stringPtr("Advisor 1"),
 			University: stringPtr("Test University"),
 			Department: stringPtr("Computer Science"),
-			Year:       int64Ptr(2023),
+			Year:       intPtr(2023),
 			Abstract:   stringPtr("First test paper abstract"),
 			Keywords:   stringPtr("test, computer science, research"),
 		},
@@ -150,7 +150,7 @@ func (suite *PapersTestSuite) createTestPapers() {
 			Advisor:    stringPtr("Advisor 2"),
 			University: stringPtr("Test University"),
 			Department: stringPtr("Mathematics"),
-			Year:       int64Ptr(2022),
+			Year:       intPtr(2022),
 			Abstract:   stringPtr("Second test paper abstract"),
 			Keywords:   stringPtr("test, mathematics, analysis"),
 		},
@@ -211,7 +211,7 @@ func (suite *PapersTestSuite) TestCreatePaper_Success() {
 		Advisor:    &[]string{"New Advisor"}[0],
 		University: &[]string{"New University"}[0],
 		Department: &[]string{"Physics"}[0],
-		Year:       &[]int64{2024}[0],
+		Year:       &[]int{2024}[0],
 		Abstract:   &[]string{"A new test paper abstract"}[0],
 		Keywords:   &[]string{"test, physics, research"}[0],
 	}

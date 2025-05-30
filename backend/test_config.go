@@ -137,9 +137,9 @@ func CleanupTestDB(config *configs.Config) error {
 
 // SeedTestData adds sample data for testing
 func SeedTestData(db *gorm.DB) error {
-	// Helper functions for creating pointers
+	// Helper functions for pointer types
 	stringPtr := func(s string) *string { return &s }
-	int64Ptr := func(i int64) *int64 { return &i }
+	intPtr := func(i int) *int { return &i }
 
 	// Generate proper password hash for "password123"
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
@@ -150,16 +150,16 @@ func SeedTestData(db *gorm.DB) error {
 	// Seed test users
 	testUsers := []database.User{
 		{
-			Email:    "admin@test.com",
-			Name:     "Test Admin",
-			Password: string(hashedPassword), // Properly hashed password123
-			Role:     "admin",
+			Email:        "admin@test.com",
+			Name:         "Test Admin",
+			PasswordHash: string(hashedPassword), // Properly hashed password123
+			Role:         "admin",
 		},
 		{
-			Email:    "user@test.com",
-			Name:     "Test User",
-			Password: string(hashedPassword), // Properly hashed password123
-			Role:     "user",
+			Email:        "user@test.com",
+			Name:         "Test User",
+			PasswordHash: string(hashedPassword), // Properly hashed password123
+			Role:         "user",
 		},
 	}
 
@@ -184,22 +184,22 @@ func SeedTestData(db *gorm.DB) error {
 			Title:         "Test Book 1",
 			Author:        "Test Author 1",
 			Publisher:     stringPtr("Test Publisher"),
-			PublishedYear: int64Ptr(2023),
+			PublishedYear: intPtr(2023),
 			ISBN:          stringPtr("978-1234567890"),
 			Subject:       stringPtr("Computer Science"),
 			Language:      stringPtr("English"),
-			Pages:         int64Ptr(300),
+			Pages:         intPtr(300),
 			Summary:       stringPtr("A test book for testing purposes"),
 		},
 		{
 			Title:         "Test Book 2",
 			Author:        "Test Author 2",
 			Publisher:     stringPtr("Test Publisher 2"),
-			PublishedYear: int64Ptr(2022),
+			PublishedYear: intPtr(2022),
 			ISBN:          stringPtr("978-0987654321"),
 			Subject:       stringPtr("Mathematics"),
 			Language:      stringPtr("English"),
-			Pages:         int64Ptr(250),
+			Pages:         intPtr(250),
 			Summary:       stringPtr("Another test book"),
 		},
 	}
@@ -212,22 +212,25 @@ func SeedTestData(db *gorm.DB) error {
 	testPapers := []database.Paper{
 		{
 			Title:      "Test Paper 1",
-			Author:     "Test Researcher 1",
-			Advisor:    stringPtr("Test Advisor"),
+			Author:     "Test Author 1",
+			Advisor:    stringPtr("Test Advisor 1"),
 			University: stringPtr("Test University"),
 			Department: stringPtr("Computer Science"),
-			Year:       int64Ptr(2023),
+			Year:       intPtr(2023),
+			ISSN:       stringPtr("1234-5678"),
 			Abstract:   stringPtr("This is a test paper abstract"),
-			Keywords:   stringPtr("test, research, computer science"),
+			Keywords:   stringPtr("test, paper, research"),
 		},
 		{
 			Title:      "Test Paper 2",
-			Author:     "Test Researcher 2",
+			Author:     "Test Author 2",
+			Advisor:    stringPtr("Test Advisor 2"),
 			University: stringPtr("Test University"),
 			Department: stringPtr("Mathematics"),
-			Year:       int64Ptr(2022),
+			Year:       intPtr(2022),
+			ISSN:       stringPtr("8765-4321"),
 			Abstract:   stringPtr("Another test paper abstract"),
-			Keywords:   stringPtr("test, mathematics, research"),
+			Keywords:   stringPtr("mathematics, research, analysis"),
 		},
 	}
 

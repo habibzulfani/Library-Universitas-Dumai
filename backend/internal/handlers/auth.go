@@ -30,7 +30,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Check if user already exists
 	var existingUser models.User
-	if err := database.GetDB().Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
+	if err := database.GetDB().Unscoped().Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
 		return
 	}
@@ -44,13 +44,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Create user
 	user := models.User{
-		Email:    req.Email,
-		Name:     req.Name,
-		Password: hashedPassword,
-		NIM:      req.NIM,
-		Jurusan:  req.Jurusan,
-		Address:  req.Address,
-		Role:     "user",
+		Email:        req.Email,
+		Name:         req.Name,
+		PasswordHash: hashedPassword,
+		NIM:          req.NIM,
+		Jurusan:      req.Jurusan,
+		Role:         "user",
 	}
 
 	if err := database.GetDB().Create(&user).Error; err != nil {
@@ -86,13 +85,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Find user by email
 	var user models.User
-	if err := database.GetDB().Where("email = ?", req.Email).First(&user).Error; err != nil {
+	if err := database.GetDB().Unscoped().Where("email = ?", req.Email).First(&user).Error; err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
 	// Check password
-	if !utils.CheckPasswordHash(req.Password, user.Password) {
+	if !utils.CheckPasswordHash(req.Password, user.PasswordHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -160,8 +159,8 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	}
 
 	// Get updated user
-	if err := database.GetDB().First(&user, user.ID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch updated profile"})
+	if err := database.GetDB().Unscoped().First(&user, user.ID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch updated user"})
 		return
 	}
 
@@ -189,7 +188,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	}
 
 	// Verify current password
-	if !utils.CheckPasswordHash(req.CurrentPassword, user.Password) {
+	if !utils.CheckPasswordHash(req.CurrentPassword, user.PasswordHash) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Current password is incorrect"})
 		return
 	}
@@ -202,7 +201,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	}
 
 	// Update password
-	if err := database.GetDB().Model(&user).Update("password", hashedPassword).Error; err != nil {
+	if err := database.GetDB().Model(&user).Update("password_hash", hashedPassword).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
 		return
 	}

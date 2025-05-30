@@ -164,10 +164,10 @@ func (suite *AuthTestSuite) TestLogin_Success() {
 	// Create a user with properly hashed password
 	hashedPassword := suite.hashPassword("password123")
 	user := models.User{
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Password: hashedPassword,
-		Role:     "user",
+		Email:        "test@example.com",
+		Name:         "Test User",
+		PasswordHash: hashedPassword,
+		Role:         "user",
 	}
 	suite.db.Create(&user)
 
@@ -197,10 +197,10 @@ func (suite *AuthTestSuite) TestLogin_InvalidCredentials() {
 	// Create a user with properly hashed password
 	hashedPassword := suite.hashPassword("password123")
 	user := models.User{
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Password: hashedPassword,
-		Role:     "user",
+		Email:        "test@example.com",
+		Name:         "Test User",
+		PasswordHash: hashedPassword,
+		Role:         "user",
 	}
 	suite.db.Create(&user)
 

@@ -58,12 +58,12 @@ func (h *BookHandler) CreateBook(c *gin.Context) {
 
 	// Parse numeric fields (convert to *int64)
 	if yearStr := c.PostForm("published_year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			book.PublishedYear = &year
 		}
 	}
 	if pagesStr := c.PostForm("pages"); pagesStr != "" {
-		if pages, err := strconv.ParseInt(pagesStr, 10, 64); err == nil {
+		if pages, err := strconv.Atoi(pagesStr); err == nil {
 			book.Pages = &pages
 		}
 	}
@@ -152,12 +152,12 @@ func (h *BookHandler) CreateUserBook(c *gin.Context) {
 
 	// Parse numeric fields (convert to *int64)
 	if yearStr := c.PostForm("published_year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			book.PublishedYear = &year
 		}
 	}
 	if pagesStr := c.PostForm("pages"); pagesStr != "" {
-		if pages, err := strconv.ParseInt(pagesStr, 10, 64); err == nil {
+		if pages, err := strconv.Atoi(pagesStr); err == nil {
 			book.Pages = &pages
 		}
 	}
@@ -235,7 +235,7 @@ func (h *BookHandler) GetBooks(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Book{}).Preload("Categories")
+	query := database.GetDB().Model(&models.Book{}).Unscoped()
 	
 	// Search functionality
 	if req.Query != "" {
@@ -256,9 +256,27 @@ func (h *BookHandler) GetBooks(c *gin.Context) {
 		query = query.Where("published_year = ?", *req.Year)
 	}
 
-	// Count total
+	// Count total using raw SQL to avoid soft delete issues
 	var total int64
-	query.Count(&total)
+	countSQL := "SELECT COUNT(*) FROM books WHERE 1=1"
+	var countArgs []interface{}
+	
+	// Apply the same filters to count query
+	if req.Query != "" {
+		searchTerm := "%" + strings.ToLower(req.Query) + "%"
+		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ?)"
+		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm)
+	}
+	if req.Category != "" {
+		countSQL += " AND id IN (SELECT book_id FROM book_categories bc JOIN categories c ON bc.category_id = c.id WHERE c.name = ?)"
+		countArgs = append(countArgs, req.Category)
+	}
+	if req.Year != nil {
+		countSQL += " AND published_year = ?"
+		countArgs = append(countArgs, *req.Year)
+	}
+	
+	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
 
 	// Get books with pagination
 	var books []models.Book
@@ -312,7 +330,7 @@ func (h *BookHandler) GetUserBooks(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Book{}).Where("created_by = ?", uid).Preload("Categories")
+	query := database.GetDB().Model(&models.Book{}).Unscoped().Where("created_by = ?", uid)
 	
 	// Search functionality
 	if req.Query != "" {
@@ -333,9 +351,27 @@ func (h *BookHandler) GetUserBooks(c *gin.Context) {
 		query = query.Where("published_year = ?", *req.Year)
 	}
 
-	// Count total
+	// Count total using raw SQL to avoid soft delete issues
 	var total int64
-	query.Count(&total)
+	countSQL := "SELECT COUNT(*) FROM books WHERE 1=1"
+	var countArgs []interface{}
+	
+	// Apply the same filters to count query
+	if req.Query != "" {
+		searchTerm := "%" + strings.ToLower(req.Query) + "%"
+		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ?)"
+		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm)
+	}
+	if req.Category != "" {
+		countSQL += " AND id IN (SELECT book_id FROM book_categories bc JOIN categories c ON bc.category_id = c.id WHERE c.name = ?)"
+		countArgs = append(countArgs, req.Category)
+	}
+	if req.Year != nil {
+		countSQL += " AND published_year = ?"
+		countArgs = append(countArgs, *req.Year)
+	}
+	
+	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
 
 	// Get books with pagination
 	var books []models.Book
@@ -367,7 +403,7 @@ func (h *BookHandler) GetBook(c *gin.Context) {
 	}
 
 	var book models.Book
-	if err := database.GetDB().Preload("Categories").Preload("Authors").First(&book, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().Preload("Categories").Preload("Authors").First(&book, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 			return
@@ -400,7 +436,7 @@ func (h *BookHandler) UpdateUserBook(c *gin.Context) {
 	}
 
 	var book models.Book
-	if err := database.GetDB().Where("id = ? AND created_by = ?", uint(id), uid).First(&book).Error; err != nil {
+	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&book).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found or you don't have permission to edit it"})
 			return
@@ -442,12 +478,12 @@ func (h *BookHandler) UpdateUserBook(c *gin.Context) {
 
 	// Parse numeric fields
 	if yearStr := c.PostForm("published_year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			book.PublishedYear = &year
 		}
 	}
 	if pagesStr := c.PostForm("pages"); pagesStr != "" {
-		if pages, err := strconv.ParseInt(pagesStr, 10, 64); err == nil {
+		if pages, err := strconv.Atoi(pagesStr); err == nil {
 			book.Pages = &pages
 		}
 	}
@@ -513,7 +549,7 @@ func (h *BookHandler) DeleteUserBook(c *gin.Context) {
 	}
 
 	var book models.Book
-	if err := database.GetDB().Where("id = ? AND created_by = ?", uint(id), uid).First(&book).Error; err != nil {
+	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&book).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found or you don't have permission to delete it"})
 			return
@@ -542,7 +578,7 @@ func (h *BookHandler) DownloadBook(c *gin.Context) {
 	}
 
 	var book models.Book
-	if err := database.GetDB().First(&book, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().First(&book, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 			return
@@ -609,7 +645,7 @@ func (h *BookHandler) UpdateBook(c *gin.Context) {
 	}
 
 	var book models.Book
-	if err := database.GetDB().First(&book, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().First(&book, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 			return
@@ -651,12 +687,12 @@ func (h *BookHandler) UpdateBook(c *gin.Context) {
 
 	// Parse numeric fields
 	if yearStr := c.PostForm("published_year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			book.PublishedYear = &year
 		}
 	}
 	if pagesStr := c.PostForm("pages"); pagesStr != "" {
-		if pages, err := strconv.ParseInt(pagesStr, 10, 64); err == nil {
+		if pages, err := strconv.Atoi(pagesStr); err == nil {
 			book.Pages = &pages
 		}
 	}
@@ -710,7 +746,7 @@ func (h *BookHandler) DeleteBook(c *gin.Context) {
 	}
 
 	var book models.Book
-	if err := database.GetDB().First(&book, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().First(&book, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 			return

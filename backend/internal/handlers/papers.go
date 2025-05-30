@@ -58,7 +58,7 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 
 	// Parse year field (convert to *int64)
 	if yearStr := c.PostForm("year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
 		}
 	}
@@ -147,7 +147,7 @@ func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 
 	// Parse year field (convert to *int64)
 	if yearStr := c.PostForm("year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
 		}
 	}
@@ -225,7 +225,7 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Paper{}).Preload("Categories")
+	query := database.GetDB().Model(&models.Paper{}).Unscoped()
 	
 	// Search functionality
 	if req.Query != "" {
@@ -246,9 +246,27 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 		query = query.Where("year = ?", *req.Year)
 	}
 
-	// Count total
+	// Count total using raw SQL to avoid soft delete issues
 	var total int64
-	query.Count(&total)
+	countSQL := "SELECT COUNT(*) FROM papers WHERE 1=1"
+	var countArgs []interface{}
+	
+	// Apply the same filters to count query
+	if req.Query != "" {
+		searchTerm := "%" + strings.ToLower(req.Query) + "%"
+		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ?)"
+		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+	if req.Category != "" {
+		countSQL += " AND id IN (SELECT paper_id FROM paper_categories pc JOIN categories c ON pc.category_id = c.id WHERE c.name = ?)"
+		countArgs = append(countArgs, req.Category)
+	}
+	if req.Year != nil {
+		countSQL += " AND year = ?"
+		countArgs = append(countArgs, *req.Year)
+	}
+	
+	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
 
 	// Get papers with pagination
 	var papers []models.Paper
@@ -280,7 +298,7 @@ func (h *PaperHandler) GetPaper(c *gin.Context) {
 	}
 
 	var paper models.Paper
-	if err := database.GetDB().Preload("Categories").Preload("Authors").First(&paper, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().Preload("Categories").Preload("Authors").First(&paper, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 			return
@@ -301,7 +319,7 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 	}
 
 	var paper models.Paper
-	if err := database.GetDB().First(&paper, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().First(&paper, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 			return
@@ -340,10 +358,13 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 	if keywords := c.PostForm("keywords"); keywords != "" {
 		paper.Keywords = &keywords
 	}
+	if issn := c.PostForm("issn"); issn != "" {
+		paper.ISSN = &issn
+	}
 
 	// Parse year field
 	if yearStr := c.PostForm("year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
 		}
 	}
@@ -397,7 +418,7 @@ func (h *PaperHandler) DeletePaper(c *gin.Context) {
 	}
 
 	var paper models.Paper
-	if err := database.GetDB().First(&paper, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().First(&paper, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 			return
@@ -426,7 +447,7 @@ func (h *PaperHandler) DownloadPaper(c *gin.Context) {
 	}
 
 	var paper models.Paper
-	if err := database.GetDB().First(&paper, uint(id)).Error; err != nil {
+	if err := database.GetDB().Unscoped().First(&paper, uint(id)).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 			return
@@ -515,7 +536,7 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Paper{}).Where("created_by = ?", uid).Preload("Categories")
+	query := database.GetDB().Model(&models.Paper{}).Unscoped().Where("created_by = ?", uid)
 	
 	// Search functionality
 	if req.Query != "" {
@@ -536,9 +557,27 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 		query = query.Where("year = ?", *req.Year)
 	}
 
-	// Count total
+	// Count total using raw SQL to avoid soft delete issues
 	var total int64
-	query.Count(&total)
+	countSQL := "SELECT COUNT(*) FROM papers WHERE 1=1"
+	var countArgs []interface{}
+	
+	// Apply the same filters to count query
+	if req.Query != "" {
+		searchTerm := "%" + strings.ToLower(req.Query) + "%"
+		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ?)"
+		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+	if req.Category != "" {
+		countSQL += " AND id IN (SELECT paper_id FROM paper_categories pc JOIN categories c ON pc.category_id = c.id WHERE c.name = ?)"
+		countArgs = append(countArgs, req.Category)
+	}
+	if req.Year != nil {
+		countSQL += " AND year = ?"
+		countArgs = append(countArgs, *req.Year)
+	}
+	
+	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
 
 	// Get papers with pagination
 	var papers []models.Paper
@@ -582,7 +621,7 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 	}
 
 	var paper models.Paper
-	if err := database.GetDB().Where("id = ? AND created_by = ?", uint(id), uid).First(&paper).Error; err != nil {
+	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&paper).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found or you don't have permission to edit it"})
 			return
@@ -624,7 +663,7 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 
 	// Parse year field
 	if yearStr := c.PostForm("year"); yearStr != "" {
-		if year, err := strconv.ParseInt(yearStr, 10, 64); err == nil {
+		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
 		}
 	}
@@ -690,7 +729,7 @@ func (h *PaperHandler) DeleteUserPaper(c *gin.Context) {
 	}
 
 	var paper models.Paper
-	if err := database.GetDB().Where("id = ? AND created_by = ?", uint(id), uid).First(&paper).Error; err != nil {
+	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&paper).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found or you don't have permission to delete it"})
 			return
