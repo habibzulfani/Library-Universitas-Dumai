@@ -17,7 +17,7 @@ import (
 func SetupTestDB() (*gorm.DB, error) {
 	// Get test database configuration from environment or use defaults
 	config := GetTestConfig()
-	
+
 	// Connect to MySQL without specifying a database first
 	rootDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/?charset=utf8mb4&parseTime=True&loc=Local",
 		config.Database.User,
@@ -88,7 +88,7 @@ func GetTestConfig() *configs.Config {
 			Port:     getTestEnv("TEST_DB_PORT", "3307"),
 			User:     getTestEnv("TEST_DB_USER", "root"),
 			Password: getTestEnv("TEST_DB_PASSWORD", "rootpassword"),
-			Name:     getTestEnv("TEST_DB_NAME", "e_repository_test"),
+			Name:     getTestEnv("TEST_DB_NAME", "e_repository_test_api"),
 		},
 		JWT: configs.JWTConfig{
 			Secret: "test-secret-key-for-testing-only",
@@ -140,6 +140,7 @@ func SeedTestData(db *gorm.DB) error {
 	// Helper functions for pointer types
 	stringPtr := func(s string) *string { return &s }
 	intPtr := func(i int) *int { return &i }
+	uintPtr := func(i uint) *uint { return &i }
 
 	// Generate proper password hash for "password123"
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
@@ -150,16 +151,28 @@ func SeedTestData(db *gorm.DB) error {
 	// Seed test users
 	testUsers := []database.User{
 		{
-			Email:        "admin@test.com",
-			Name:         "Test Admin",
-			PasswordHash: string(hashedPassword), // Properly hashed password123
-			Role:         "admin",
+			Email:         "admin@demo.com",
+			Name:          "Demo Admin",
+			PasswordHash:  string(hashedPassword), // Properly hashed password123
+			Role:          "admin",
+			UserType:      "lecturer",
+			NIMNIDN:       stringPtr("ADM001"),
+			Faculty:       stringPtr("Fakultas Ilmu Komputer"),
+			DepartmentID:  uintPtr(2), // Sistem Informasi
+			EmailVerified: true,
+			IsApproved:    true,
 		},
 		{
-			Email:        "user@test.com",
-			Name:         "Test User",
-			PasswordHash: string(hashedPassword), // Properly hashed password123
-			Role:         "user",
+			Email:         "user@demo.com",
+			Name:          "Demo User",
+			PasswordHash:  string(hashedPassword), // Properly hashed password123
+			Role:          "user",
+			UserType:      "student",
+			NIMNIDN:       stringPtr("STU001"),
+			Faculty:       stringPtr("Fakultas Ilmu Komputer"),
+			DepartmentID:  uintPtr(2), // Sistem Informasi
+			EmailVerified: true,
+			IsApproved:    true,
 		},
 	}
 
@@ -181,26 +194,30 @@ func SeedTestData(db *gorm.DB) error {
 	// Seed test books
 	testBooks := []database.Book{
 		{
-			Title:         "Test Book 1",
-			Author:        "Test Author 1",
-			Publisher:     stringPtr("Test Publisher"),
-			PublishedYear: intPtr(2023),
-			ISBN:          stringPtr("978-1234567890"),
+			Title:         "Introduction to Algorithms",
+			Author:        "Thomas H. Cormen",
+			Publisher:     stringPtr("MIT Press"),
+			PublishedYear: intPtr(2009),
+			ISBN:          stringPtr("978-0262033848"),
 			Subject:       stringPtr("Computer Science"),
 			Language:      stringPtr("English"),
-			Pages:         intPtr(300),
-			Summary:       stringPtr("A test book for testing purposes"),
+			Pages:         intPtr(1312),
+			Summary:       stringPtr("A comprehensive textbook covering algorithmic techniques and data structures used in computer science."),
+			FileURL:       stringPtr("/uploads/books/intro_algorithms.pdf"),
+			CreatedBy:     uintPtr(1), // Admin user
 		},
 		{
-			Title:         "Test Book 2",
-			Author:        "Test Author 2",
-			Publisher:     stringPtr("Test Publisher 2"),
-			PublishedYear: intPtr(2022),
-			ISBN:          stringPtr("978-0987654321"),
-			Subject:       stringPtr("Mathematics"),
+			Title:         "Clean Code",
+			Author:        "Robert C. Martin",
+			Publisher:     stringPtr("Prentice Hall"),
+			PublishedYear: intPtr(2008),
+			ISBN:          stringPtr("978-0132350884"),
+			Subject:       stringPtr("Computer Science"),
 			Language:      stringPtr("English"),
-			Pages:         intPtr(250),
-			Summary:       stringPtr("Another test book"),
+			Pages:         intPtr(464),
+			Summary:       stringPtr("Best practices for writing clean, maintainable, and efficient code."),
+			FileURL:       stringPtr("/uploads/books/clean_code.pdf"),
+			CreatedBy:     uintPtr(1), // Admin user
 		},
 	}
 
@@ -211,26 +228,28 @@ func SeedTestData(db *gorm.DB) error {
 	// Seed test papers
 	testPapers := []database.Paper{
 		{
-			Title:      "Test Paper 1",
-			Author:     "Test Author 1",
-			Advisor:    stringPtr("Test Advisor 1"),
-			University: stringPtr("Test University"),
+			Title:      "Machine Learning Applications in Academic Performance Prediction",
+			Author:     "John Smith",
+			Advisor:    stringPtr("Dr. Ahmad Rahman"),
+			University: stringPtr("Universitas Dumai"),
 			Department: stringPtr("Computer Science"),
 			Year:       intPtr(2023),
-			ISSN:       stringPtr("1234-5678"),
-			Abstract:   stringPtr("This is a test paper abstract"),
-			Keywords:   stringPtr("test, paper, research"),
+			Abstract:   stringPtr("This research explores the application of machine learning algorithms in predicting student academic performance."),
+			Keywords:   stringPtr("machine learning, academic performance, prediction"),
+			FileURL:    stringPtr("/uploads/papers/ml_academic_prediction.pdf"),
+			CreatedBy:  uintPtr(1), // Admin user
 		},
 		{
-			Title:      "Test Paper 2",
-			Author:     "Test Author 2",
-			Advisor:    stringPtr("Test Advisor 2"),
-			University: stringPtr("Test University"),
-			Department: stringPtr("Mathematics"),
-			Year:       intPtr(2022),
-			ISSN:       stringPtr("8765-4321"),
-			Abstract:   stringPtr("Another test paper abstract"),
-			Keywords:   stringPtr("mathematics, research, analysis"),
+			Title:      "Database Query Optimization",
+			Author:     "Sarah Johnson",
+			Advisor:    stringPtr("Dr. Ahmad Rahman"),
+			University: stringPtr("Universitas Dumai"),
+			Department: stringPtr("Computer Science"),
+			Year:       intPtr(2023),
+			Abstract:   stringPtr("An investigation into query optimization techniques for large-scale database systems."),
+			Keywords:   stringPtr("database optimization, query performance, big data"),
+			FileURL:    stringPtr("/uploads/papers/db_optimization.pdf"),
+			CreatedBy:  uintPtr(1), // Admin user
 		},
 	}
 
@@ -247,4 +266,4 @@ func getTestEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-} 
+}

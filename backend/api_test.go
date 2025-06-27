@@ -14,6 +14,7 @@ import (
 	"e-repository-api/internal/handlers"
 	"e-repository-api/internal/middleware"
 	"e-repository-api/internal/models"
+	"e-repository-api/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -23,13 +24,13 @@ import (
 
 type APIIntegrationTestSuite struct {
 	suite.Suite
-	db          *gorm.DB
-	router      *gin.Engine
-	config      *configs.Config
-	adminToken  string
-	userToken   string
-	testBooks   []models.Book  // Store created test books
-	testPapers  []models.Paper // Store created test papers
+	db         *gorm.DB
+	router     *gin.Engine
+	config     *configs.Config
+	adminToken string
+	userToken  string
+	testBooks  []models.Book  // Store created test books
+	testPapers []models.Paper // Store created test papers
 }
 
 func (suite *APIIntegrationTestSuite) SetupSuite() {
@@ -56,7 +57,7 @@ func (suite *APIIntegrationTestSuite) SetupSuite() {
 func (suite *APIIntegrationTestSuite) SetupTest() {
 	// Clean up data before each test and recreate test data
 	suite.cleanupTestData()
-	
+
 	// Create test data and get tokens
 	suite.createTestData()
 }
@@ -87,9 +88,9 @@ func (suite *APIIntegrationTestSuite) cleanupTestData() {
 
 func (suite *APIIntegrationTestSuite) setupRoutes() {
 	// Create handlers
-	authHandler := handlers.NewAuthHandler(suite.config)
-	bookHandler := handlers.NewBookHandler(suite.config)
-	paperHandler := handlers.NewPaperHandler(suite.config)
+	authHandler := handlers.NewAuthHandler(suite.db, suite.config)
+	bookHandler := handlers.NewBookHandler(suite.db, suite.config)
+	paperHandler := handlers.NewPaperHandler(suite.db, suite.config)
 
 	// Public routes
 	public := suite.router.Group("/api")
@@ -197,9 +198,14 @@ func (suite *APIIntegrationTestSuite) TestHealthCheck() {
 func (suite *APIIntegrationTestSuite) TestUserRegistrationAndLogin() {
 	// Register new user
 	registerReq := models.RegisterRequest{
-		Email:    "newuser@test.com",
-		Name:     "New User",
-		Password: "password123",
+		Email:        "newuser@test.com",
+		Name:         "New Test User",
+		Password:     "password123",
+		UserType:     "student",
+		NIMNIDN:      "NEW001",
+		Faculty:      "Fakultas Ilmu Komputer",
+		DepartmentID: 2,
+		Address:      utils.StringPtr("Test Address"),
 	}
 
 	jsonData, _ := json.Marshal(registerReq)
@@ -211,12 +217,15 @@ func (suite *APIIntegrationTestSuite) TestUserRegistrationAndLogin() {
 
 	assert.Equal(suite.T(), http.StatusCreated, w.Code)
 
-	var authResponse models.AuthResponse
-	json.Unmarshal(w.Body.Bytes(), &authResponse)
-	assert.NotEmpty(suite.T(), authResponse.Token)
-	assert.Equal(suite.T(), "newuser@test.com", authResponse.User.Email)
+	var response models.AuthResponse
+	json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NotEmpty(suite.T(), response.Token)
+	assert.NotEmpty(suite.T(), response.User.Email)
+	assert.Equal(suite.T(), "newuser@test.com", response.User.Email)
+	assert.Equal(suite.T(), "New Test User", response.User.Name)
+	assert.Equal(suite.T(), "user", response.User.Role)
 
-	// Login with new user
+	// Test login with new user
 	loginReq := models.LoginRequest{
 		Email:    "newuser@test.com",
 		Password: "password123",
@@ -231,8 +240,10 @@ func (suite *APIIntegrationTestSuite) TestUserRegistrationAndLogin() {
 
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
 
-	json.Unmarshal(w.Body.Bytes(), &authResponse)
-	assert.NotEmpty(suite.T(), authResponse.Token)
+	json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NotEmpty(suite.T(), response.Token)
+	assert.NotEmpty(suite.T(), response.User.Email)
+	assert.Equal(suite.T(), "newuser@test.com", response.User.Email)
 }
 
 func (suite *APIIntegrationTestSuite) TestBooksWorkflow() {
@@ -266,10 +277,10 @@ func (suite *APIIntegrationTestSuite) TestBooksWorkflow() {
 		Title:         "Integration Test Book",
 		Author:        "Test Author",
 		Publisher:     &[]string{"Test Publisher"}[0],
-		PublishedYear: &[]int64{2024}[0],
+		PublishedYear: &[]int{2024}[0],
 		Subject:       &[]string{"Testing"}[0],
 		Language:      &[]string{"English"}[0],
-		Pages:         &[]int64{100}[0],
+		Pages:         &[]int{100}[0],
 		Summary:       &[]string{"A book for integration testing"}[0],
 	}
 
@@ -347,7 +358,7 @@ func (suite *APIIntegrationTestSuite) TestPapersWorkflow() {
 		Author:     "Test Researcher",
 		University: &[]string{"Test University"}[0],
 		Department: &[]string{"Computer Science"}[0],
-		Year:       &[]int64{2024}[0],
+		Year:       &[]int{2024}[0],
 		Abstract:   &[]string{"A paper for integration testing"}[0],
 		Keywords:   &[]string{"test, integration, research"}[0],
 	}
@@ -400,7 +411,7 @@ func (suite *APIIntegrationTestSuite) TestSearchFunctionality() {
 
 	var response models.PaginatedResponse
 	json.Unmarshal(w.Body.Bytes(), &response)
-	
+
 	// Should find books with "Computer" in subject or title
 	books := response.Data.([]interface{})
 	assert.Greater(suite.T(), len(books), 0)
@@ -430,11 +441,16 @@ func (suite *APIIntegrationTestSuite) TestPaginationFunctionality() {
 	assert.Equal(suite.T(), 1, response.Page)
 	assert.Equal(suite.T(), 1, response.Limit)
 	assert.Equal(suite.T(), 2, response.TotalPages) // 2 books with limit 1
-	
+
 	books := response.Data.([]interface{})
 	assert.Len(suite.T(), books, 1)
 }
 
+// Helper function to create a string pointer
+func stringPtr(s string) *string {
+	return &s
+}
+
 func TestAPIIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(APIIntegrationTestSuite))
-} 
+}

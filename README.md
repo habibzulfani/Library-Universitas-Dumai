@@ -1,287 +1,152 @@
-# E-Repository System - Universitas Dumai
+# E-Repository Universitas Dumai
 
-A comprehensive digital repository system for academic books and research papers, built with modern web technologies.
+Aplikasi E-Repositori untuk Universitas Dumai yang memungkinkan mahasiswa dan dosen untuk mengunggah, mengelola, dan mengakses karya ilmiah dan buku-buku akademik.
 
-## 🏗️ System Architecture
+## Fitur Utama
 
-### Backend (Go/Gin)
-- **Framework**: Gin-Gonic for RESTful API
-- **Database**: MySQL 8.0 with comprehensive schema
-- **ORM**: GORM for database operations
-- **Authentication**: JWT-based authentication
-- **Security**: Bcrypt password hashing, role-based access control
+- Manajemen pengguna (mahasiswa, dosen, admin)
+- Upload dan manajemen karya ilmiah
+- Upload dan manajemen buku
+- Pencarian dan filter konten
+- Sistem verifikasi email
+- Sistem persetujuan dosen
+- Statistik dan pelacakan aktivitas
+- Manajemen kategori dan departemen
 
-### Frontend (Next.js)
-- **Framework**: Next.js 15.3.2 with App Router
-- **Language**: TypeScript for type safety
-- **Styling**: Tailwind CSS for modern UI
-- **State Management**: React Context API
-- **HTTP Client**: Axios with interceptors
+## Fitur Author pada Form Edit Buku & Karya Ilmiah
 
-### Database Schema
-- **Users**: Role-based user management (public, user, admin)
-- **Content**: Books and papers with metadata
-- **Categories**: Organized content classification
-- **Relationships**: User-content interactions, author relationships
-- **Activity Tracking**: User activity logs and download statistics
+Pada form edit buku dan karya ilmiah, pengguna dapat mengelola daftar penulis (author) dengan fitur berikut:
 
-## 📁 Project Structure
+- **Melihat Daftar Author**: Author pertama akan muncul di field input, sisanya sebagai tag/bubble di bawahnya.
+- **Menambah Author**: Ketik nama author di field input, klik tombol "Add" atau tekan Enter untuk menambah ke daftar.
+- **Menghapus Author**: Klik ikon "X" pada tag author untuk menghapus author tersebut dari daftar.
+- **Mengedit Author**: Klik ikon "Edit" (ikon plus) pada tag author untuk memindahkan nama author ke field input, lalu ubah dan klik "Add" untuk menyimpan perubahan.
+- **Mengatur Ulang Author**: Untuk mengganti seluruh daftar author, hapus semua tag dan kosongkan field input, lalu masukkan author baru dan klik "Add".
+- **Urutan Author**: Urutan author akan sesuai dengan urutan penambahan (author di field input akan menjadi yang pertama jika tidak diklik "Add").
+- **Tidak Perlu Klik Add untuk Author Pertama**: Jika tidak ingin mengubah author pertama, cukup biarkan di field input dan langsung submit form.
 
-```
-e-repository/
-├── backend/                    # Go API server
-│   ├── cmd/main.go            # Application entry point
-│   ├── configs/               # Configuration management
-│   ├── internal/
-│   │   ├── models/            # Data models and DTOs
-│   │   ├── handlers/          # HTTP request handlers
-│   │   ├── middleware/        # Authentication middleware
-│   │   ├── database/          # Database connection and migrations
-│   │   └── utils/             # Utility functions
-│   ├── go.mod                 # Go dependencies
-│   └── Dockerfile             # Backend container
-├── frontend/                  # Next.js application
-│   ├── src/
-│   │   ├── app/               # App Router pages
-│   │   ├── components/        # Reusable components
-│   │   ├── contexts/          # React Context providers
-│   │   └── lib/               # API client and utilities
-│   ├── package.json           # Node.js dependencies
-│   └── Dockerfile             # Frontend container
-├── database_schema.sql        # Database schema
-├── sample_data.sql           # Comprehensive sample data
-├── simple_sample_data.sql    # Basic sample data
-└── docker-compose.yml        # Docker services configuration
-```
+Fitur ini berlaku baik untuk form edit buku maupun karya ilmiah (paper).
 
-## 🚀 Quick Start
+## Teknologi yang Digunakan
 
-### Prerequisites
-- Docker and Docker Compose
+### Backend
+- Go (Golang)
+- MySQL
+- JWT untuk autentikasi
+- GORM untuk ORM
+- Gin untuk web framework
+
+### Frontend
+- Next.js 14
+- TypeScript
+- Chakra UI
+- React Query
+- Axios
+
+## Persyaratan Sistem
+
+- Go 1.21 atau lebih baru
+- Node.js 18 atau lebih baru
+- MySQL 8.0 atau lebih baru
 - Git
 
-### Installation
+## Instalasi
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd e-repository
-   ```
+1. Clone repository:
+```bash
+git clone https://github.com/yourusername/e-repository.git
+cd e-repository
+```
 
-2. **Start the services**
-   ```bash
-   docker-compose up -d
-   ```
+2. Setup database:
+```bash
+# Masuk ke MySQL
+mysql -u root -p
 
-3. **Verify the services**
-   ```bash
-   # Check all services are running
-   docker-compose ps
-   
-   # Test API health
-   curl http://localhost:8080/api/v1/health
-   
-   # Access frontend
-   open http://localhost:3000
-   ```
+# Di dalam MySQL, jalankan:
+source database_schema.sql
+```
 
-## 🔑 Demo Accounts
+3. Setup backend:
+```bash
+cd backend
+go mod download
+go run main.go
+```
 
-The system comes with pre-configured demo accounts for testing:
+4. Setup frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-| Role  | Email             | Password    | Description                    |
-|-------|-------------------|-------------|--------------------------------|
-| Admin | admin@demo.com    | password123 | Full administrative access     |
-| User  | user@demo.com     | password123 | Standard user privileges       |
-| User  | john.smith@demo.com | password123 | Sample student account        |
-| User  | sarah.johnson@demo.com | password123 | Sample student account     |
+## Konfigurasi
 
-### Demo Data Included
-- **5 Books**: Computer Science, Mathematics, and Physics textbooks
-- **4 Papers**: Research papers in various academic fields
-- **4 Categories**: Computer Science, Mathematics, Physics, Engineering
-- **Activity Logs**: Sample user interactions
-- **Relationships**: Author associations and category mappings
-
-## 🌐 API Endpoints
-
-### Public Endpoints
-- `GET /api/v1/health` - Health check
-- `POST /api/v1/auth/login` - User authentication
-- `POST /api/v1/auth/register` - User registration
-- `GET /api/v1/books` - List books (with search & pagination)
-- `GET /api/v1/papers` - List papers (with search & pagination)
-
-### Protected Endpoints (Requires Authentication)
-- `GET /api/v1/profile` - User profile
-- `GET /api/v1/books/:id/download` - Download book
-- `GET /api/v1/papers/:id/download` - Download paper
-
-### Admin Endpoints (Requires Admin Role)
-- `POST /api/v1/admin/books` - Create book
-- `PUT /api/v1/admin/books/:id` - Update book
-- `DELETE /api/v1/admin/books/:id` - Delete book
-- `POST /api/v1/admin/papers` - Create paper
-- `PUT /api/v1/admin/papers/:id` - Update paper
-- `DELETE /api/v1/admin/papers/:id` - Delete paper
-- `GET /api/v1/admin/stats` - System statistics
-
-## 🔧 Configuration
-
-### Environment Variables
-
-**Backend (.env)**
+### Backend
+Buat file `.env` di folder `backend`:
 ```env
-DB_HOST=mysql
+DB_HOST=localhost
 DB_PORT=3306
-DB_NAME=test_db2
-DB_USER=e_repositori
-DB_PASSWORD=secure_password_here
-JWT_SECRET=your_jwt_secret_key_here
-PORT=8080
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=e_repository_db
+JWT_SECRET=your_jwt_secret
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
 ```
 
-**Frontend**
+### Frontend
+Buat file `.env.local` di folder `frontend`:
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:8080
+NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
 ```
 
-### Docker Services
+## Akses Aplikasi
 
-- **MySQL**: Port 3307 (mapped from 3306)
-- **API Server**: Port 8080
-- **Frontend**: Port 3000
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8080/api/v1
 
-## 🎯 Features
+## Default Admin Credentials
 
-### ✅ Implemented Features
-- User authentication and authorization
-- Role-based access control (public, user, admin)
-- Book and paper management
-- Search and pagination
-- Category organization
-- File upload handling
-- Activity logging
-- Download tracking
-- Responsive web interface
-- REST API with comprehensive endpoints
+Setelah setup database, Anda dapat login sebagai admin dengan kredensial berikut:
+- Email: admin@example.com
+- Password: admin123
 
-### 🚧 Future Enhancements
-- File upload functionality
-- Advanced search filters
-- User dashboard with statistics
-- Admin management panel
-- Email notifications
-- Advanced user management
-- Content recommendation system
-- API documentation (Swagger)
+**PENTING**: Pastikan untuk mengganti password admin segera setelah login pertama kali.
 
-## 🛠️ Development
+## Struktur Database
 
-### Running in Development Mode
+Database menggunakan MySQL dengan skema yang mencakup:
+- Manajemen pengguna (users)
+- Karya ilmiah (papers)
+- Buku (books)
+- Departemen (departments)
+- Kategori (categories)
+- Pelacakan aktivitas (activity_logs)
+- Statistik (counters)
+- Dan tabel pendukung lainnya
 
-1. **Backend Development**
-   ```bash
-   cd backend
-   go run cmd/main.go
-   ```
+## API Documentation
 
-2. **Frontend Development**
-   ```bash
-   cd frontend
-   npm run dev
-   ```
+API documentation tersedia di `/api/v1/docs` setelah menjalankan backend server.
 
-3. **Database Management**
-   ```bash
-   # Access MySQL
-   docker exec -it e-repository-mysql mysql -u root -prootpassword test_db2
-   
-   # Load sample data
-   docker exec -i e-repository-mysql mysql -u root -prootpassword < simple_sample_data.sql
-   ```
+## Kontribusi
 
-### Building for Production
+1. Fork repository
+2. Buat branch fitur (`git checkout -b feature/amazing-feature`)
+3. Commit perubahan (`git commit -m 'Add some amazing feature'`)
+4. Push ke branch (`git push origin feature/amazing-feature`)
+5. Buat Pull Request
 
-```bash
-# Build all services
-docker-compose build
+## Lisensi
 
-# Deploy to production
-docker-compose up -d --scale frontend=2
-```
+Proyek ini dilisensikan di bawah Lisensi MIT - lihat file [LICENSE](LICENSE) untuk detailnya.
 
-## 📊 Database Schema
+## Kontak
 
-The system uses a comprehensive MySQL schema with the following key tables:
+Habib Zulfani - [@habibzulfani](https://github.com/habibzulfani)
 
-- `users` - User accounts and profiles
-- `books` - Book metadata and information
-- `papers` - Research paper details
-- `categories` - Content categorization
-- `book_categories`, `paper_categories` - Category relationships
-- `book_authors`, `paper_authors` - Author relationships
-- `user_books`, `user_papers` - User content interactions
-- `activity_logs` - User activity tracking
-- `downloads` - Download history
-- `file_uploads` - File management
-
-## 🔒 Security Features
-
-- JWT token-based authentication
-- Bcrypt password hashing
-- Role-based authorization
-- CORS protection
-- SQL injection prevention (GORM)
-- Input validation and sanitization
-
-## 📱 Frontend Features
-
-- **Modern UI**: Built with Tailwind CSS
-- **Responsive Design**: Mobile-first approach
-- **TypeScript**: Type-safe development
-- **Search Functionality**: Real-time search
-- **Pagination**: Efficient data loading
-- **Authentication Flow**: Login/logout/registration
-- **Error Handling**: User-friendly error messages
-- **Loading States**: Better UX with loading indicators
-
-## 🚀 Testing
-
-### API Testing
-```bash
-# Test authentication
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@demo.com","password":"password123"}'
-
-# Test book listing
-curl http://localhost:8080/api/v1/books
-
-# Test paper search
-curl "http://localhost:8080/api/v1/papers?query=machine%20learning"
-```
-
-### Frontend Testing
-1. Navigate to http://localhost:3000
-2. Use demo credentials to login
-3. Browse books and papers
-4. Test search functionality
-5. Verify responsive design
-
-## 📞 Support
-
-For questions or issues:
-- Check the logs: `docker-compose logs [service-name]`
-- Verify all services are running: `docker-compose ps`
-- Restart services: `docker-compose restart [service-name]`
-
-## 🎉 Demo Access
-
-Visit the application at: **http://localhost:3000**
-
-Use the demo credentials provided in the login page to explore the system features.
-
----
-
-**Built with ❤️ for Universitas Dumai** 
+Link Proyek: [https://github.com/habibzulfani/e-repository](https://github.com/habibzulfani/e-repository) 

@@ -52,7 +52,7 @@ func AuthMiddleware(config *configs.Config) gin.HandlerFunc {
 		}
 
 		userID := uint(claims["user_id"].(float64))
-		
+
 		// Get user from database
 		var user models.User
 		if err := database.GetDB().First(&user, userID).Error; err != nil {
@@ -64,6 +64,7 @@ func AuthMiddleware(config *configs.Config) gin.HandlerFunc {
 		// Set user in context
 		c.Set("user", user)
 		c.Set("user_id", userID)
+		c.Set("user_role", user.Role)
 		c.Next()
 	}
 }
@@ -129,6 +130,7 @@ func OptionalAuthMiddleware(config *configs.Config) gin.HandlerFunc {
 
 		c.Set("user", user)
 		c.Set("user_id", userID)
+		c.Set("user_role", user.Role)
 		c.Next()
 	}
-} 
+}

@@ -8,25 +8,86 @@
 -- =====================================================
 
 -- Create database if it doesn't exist
-CREATE DATABASE IF NOT EXISTS test_db2;
-USE test_db2;
+CREATE DATABASE IF NOT EXISTS e_repository_db;
+USE e_repository_db;
 
 -- =====================================================
 -- USER MANAGEMENT TABLES
 -- =====================================================
 
+-- Departments table - Department management
+CREATE TABLE IF NOT EXISTS departments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    faculty ENUM('Fakultas Ekonomi', 'Fakultas Ilmu Komputer', 'Fakultas Hukum') NOT NULL,
+    created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    UNIQUE KEY unique_department_faculty (name, faculty)
+) ENGINE=InnoDB;
+
+-- Insert default departments
+INSERT INTO departments (name, faculty) VALUES
+    ('Manajemen', 'Fakultas Ekonomi'),
+    ('Sistem Informasi', 'Fakultas Ilmu Komputer'),
+    ('Teknik Informatika', 'Fakultas Ilmu Komputer'),
+    ('Rekayasa Perangkat Lunak', 'Fakultas Ilmu Komputer'),
+    ('Manajemen Informatika', 'Fakultas Ilmu Komputer'),
+    ('Ilmu Hukum', 'Fakultas Hukum');
+
 -- Users table - Core user management
 CREATE TABLE IF NOT EXISTS users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    email VARCHAR(255) UNIQUE NOT NULL,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     name VARCHAR(255) NOT NULL,
     role ENUM('admin', 'user') DEFAULT 'user',
-    nim VARCHAR(50),
-    jurusan VARCHAR(255),
+    user_type ENUM('student', 'lecturer') DEFAULT 'student',
+    nim_nidn VARCHAR(50) NOT NULL,
+    faculty ENUM('Fakultas Ekonomi', 'Fakultas Ilmu Komputer', 'Fakultas Hukum') NOT NULL,
+    department_id BIGINT UNSIGNED NOT NULL,
+    address VARCHAR(500),
+    profile_picture_url VARCHAR(500),
     login_counter INT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    email_verified BOOLEAN DEFAULT FALSE,
+    verification_token VARCHAR(255),
+    is_approved BOOLEAN DEFAULT FALSE,
+    created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    deleted_at DATETIME(3) NULL DEFAULT NULL,
+    CONSTRAINT uni_users_email UNIQUE (email),
+    CONSTRAINT chk_email CHECK (email REGEXP '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'),
+    CONSTRAINT chk_nim_nidn CHECK (
+        (user_type = 'student' AND nim_nidn REGEXP '^[0-9]{7,}$') OR
+        (user_type = 'lecturer' AND nim_nidn REGEXP '^[0-9]{10,}$')
+    ),
+    INDEX idx_users_role (role),
+    FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+-- Insert default admin user
+-- Password: admin123 (should be changed on first login)
+INSERT INTO users (
+    email,
+    password_hash,
+    name,
+    role,
+    user_type,
+    nim_nidn,
+    faculty,
+    department_id,
+    email_verified,
+    is_approved
+) VALUES (
+    'admin@example.com',
+    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- bcrypt hash of 'admin123'
+    'System Administrator',
+    'admin',
+    'lecturer',
+    '0000000001', -- 10-digit NIDN for lecturer
+    'Fakultas Ilmu Komputer',
+    2, -- Department ID for 'Sistem Informasi'
+    TRUE,
+    TRUE
 );
 
 -- =====================================================
@@ -35,7 +96,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Papers table - Academic papers and journals
 CREATE TABLE IF NOT EXISTS papers (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(500) NOT NULL,
     author VARCHAR(255) NOT NULL,
     advisor VARCHAR(255),
@@ -43,20 +104,29 @@ CREATE TABLE IF NOT EXISTS papers (
     department VARCHAR(255),
     year INT,
     issn VARCHAR(191),
+    journal VARCHAR(255),
+    volume INT,
+    issue INT,
+    pages VARCHAR(50),
+    doi VARCHAR(255),
     abstract TEXT,
     keywords TEXT,
     file_url VARCHAR(500),
-    created_by INT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    cover_image_url VARCHAR(500),
+    created_by BIGINT UNSIGNED,
+    created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-    INDEX idx_created_by (created_by)
-);
+    INDEX idx_created_by (created_by),
+    INDEX idx_department (department),
+    INDEX idx_journal (journal(100)),
+    INDEX idx_doi (doi(100))
+) ENGINE=InnoDB;
 
 -- Books table - Book management
 CREATE TABLE IF NOT EXISTS books (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(500) NOT NULL,
     author VARCHAR(255) NOT NULL,
     publisher VARCHAR(255),
@@ -67,13 +137,14 @@ CREATE TABLE IF NOT EXISTS books (
     pages INT,
     summary TEXT,
     file_url VARCHAR(500),
-    created_by INT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    cover_image_url VARCHAR(500),
+    created_by BIGINT UNSIGNED,
+    created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_created_by (created_by)
-);
+) ENGINE=InnoDB;
 
 -- =====================================================
 -- RELATIONSHIP TABLES (Many-to-Many)
@@ -81,8 +152,8 @@ CREATE TABLE IF NOT EXISTS books (
 
 -- User-Books relationship (for favorites, downloads, etc.)
 CREATE TABLE IF NOT EXISTS user_books (
-    user_id INT NOT NULL,
-    book_id INT NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    book_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
     
     PRIMARY KEY (user_id, book_id),
@@ -92,8 +163,8 @@ CREATE TABLE IF NOT EXISTS user_books (
 
 -- User-Papers relationship (for favorites, downloads, etc.)
 CREATE TABLE IF NOT EXISTS user_papers (
-    user_id INT NOT NULL,
-    paper_id INT NOT NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    paper_id BIGINT UNSIGNED NOT NULL,
     created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
     
     PRIMARY KEY (user_id, paper_id),
@@ -103,9 +174,9 @@ CREATE TABLE IF NOT EXISTS user_papers (
 
 -- Paper authors relationship
 CREATE TABLE IF NOT EXISTS paper_authors (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    paper_id INT NOT NULL,
-    user_id INT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    paper_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED,
     author_name LONGTEXT NOT NULL,
     created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
     updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -119,9 +190,9 @@ CREATE TABLE IF NOT EXISTS paper_authors (
 
 -- Book authors relationship
 CREATE TABLE IF NOT EXISTS book_authors (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    book_id INT NOT NULL,
-    user_id INT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    book_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED,
     author_name LONGTEXT NOT NULL,
     created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
     updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -139,10 +210,10 @@ CREATE TABLE IF NOT EXISTS book_authors (
 
 -- Activity logs for tracking user actions
 CREATE TABLE IF NOT EXISTS activity_logs (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED,
     action LONGTEXT NOT NULL,
-    item_id INT,
+    item_id BIGINT UNSIGNED,
     item_type ENUM('book', 'paper') NULL,
     ip_address VARCHAR(45),
     user_agent TEXT,
@@ -157,7 +228,7 @@ CREATE TABLE IF NOT EXISTS activity_logs (
 
 -- Counters for tracking various metrics
 CREATE TABLE IF NOT EXISTS counters (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(255) NOT NULL UNIQUE,
     count BIGINT DEFAULT 0,
     updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -171,7 +242,7 @@ CREATE TABLE IF NOT EXISTS counters (
 
 -- Categories for better organization
 CREATE TABLE IF NOT EXISTS categories (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     type ENUM('book', 'paper', 'both') DEFAULT 'both',
@@ -184,8 +255,8 @@ CREATE TABLE IF NOT EXISTS categories (
 
 -- Book-Category relationship
 CREATE TABLE IF NOT EXISTS book_categories (
-    book_id INT NOT NULL,
-    category_id INT NOT NULL,
+    book_id BIGINT UNSIGNED NOT NULL,
+    category_id BIGINT UNSIGNED NOT NULL,
     
     PRIMARY KEY (book_id, category_id),
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
@@ -194,8 +265,8 @@ CREATE TABLE IF NOT EXISTS book_categories (
 
 -- Paper-Category relationship
 CREATE TABLE IF NOT EXISTS paper_categories (
-    paper_id INT NOT NULL,
-    category_id INT NOT NULL,
+    paper_id BIGINT UNSIGNED NOT NULL,
+    category_id BIGINT UNSIGNED NOT NULL,
     
     PRIMARY KEY (paper_id, category_id),
     FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE,
@@ -204,14 +275,14 @@ CREATE TABLE IF NOT EXISTS paper_categories (
 
 -- File uploads tracking
 CREATE TABLE IF NOT EXISTS file_uploads (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     filename VARCHAR(255) NOT NULL,
     original_name VARCHAR(255) NOT NULL,
     file_path LONGTEXT NOT NULL,
     file_size BIGINT,
     mime_type VARCHAR(100),
-    uploaded_by INT,
-    related_id INT,
+    uploaded_by BIGINT UNSIGNED,
+    related_id BIGINT UNSIGNED,
     related_type ENUM('book', 'paper'),
     created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
     
@@ -223,9 +294,9 @@ CREATE TABLE IF NOT EXISTS file_uploads (
 
 -- Download statistics
 CREATE TABLE IF NOT EXISTS downloads (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT,
-    item_id INT NOT NULL,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED,
+    item_id BIGINT UNSIGNED NOT NULL,
     item_type ENUM('book', 'paper') NOT NULL,
     ip_address VARCHAR(45),
     user_agent TEXT,
@@ -302,15 +373,13 @@ DELIMITER ;
 -- =====================================================
 
 -- Additional indexes for better query performance
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_books_title ON books(title(100));
 CREATE INDEX idx_books_author ON books(author(100));
 CREATE INDEX idx_books_subject ON books(subject(100));
 CREATE INDEX idx_papers_title ON papers(title(100));
 CREATE INDEX idx_papers_author ON papers(author(100));
 CREATE INDEX idx_papers_year ON papers(year);
-CREATE INDEX idx_papers_department ON papers(department(100));
+CREATE INDEX idx_papers_department ON papers(department);
 
 -- =====================================================
 -- VIEWS FOR COMMON QUERIES
@@ -382,7 +451,7 @@ DELIMITER ;
 
 -- Note: User creation and permissions should be handled by environment setup
 -- CREATE USER 'e_repositori'@'localhost' IDENTIFIED BY 'secure_password_here';
--- GRANT SELECT, INSERT, UPDATE, DELETE ON test_db2.* TO 'e_repositori'@'localhost';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON e_repository_db.* TO 'e_repositori'@'localhost';
 -- FLUSH PRIVILEGES;
 
 -- =====================================================
@@ -397,4 +466,7 @@ DELIMITER ;
 
 -- =====================================================
 -- END OF SCHEMA
--- ===================================================== 
+-- =====================================================
+
+-- Optional: Grant permissions to application user
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON e_repository_db.* TO 'e_repositori'@'localhost'; 

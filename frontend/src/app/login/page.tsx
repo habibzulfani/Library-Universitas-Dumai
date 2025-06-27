@@ -1,20 +1,28 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { UserIcon, KeyIcon } from '@heroicons/react/24/outline';
+import { UserIcon } from '@heroicons/react/24/outline';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
+    nim_nidn: '',
     password: '',
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<'email' | 'nim_nidn'>('email');
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace('/');
+    }
+  }, [isAuthenticated, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,7 +30,12 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      await login(formData.email, formData.password);
+      // If using NIM/NIDN, send that instead of email
+      const loginData = loginMethod === 'email'
+        ? { email: formData.email, password: formData.password }
+        : { nim_nidn: formData.nim_nidn, password: formData.password };
+
+      await login(loginData);
       router.push('/');
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -40,7 +53,8 @@ export default function LoginPage() {
   };
 
   const handleDemoLogin = (email: string, password: string) => {
-    setFormData({ email, password });
+    setFormData({ email, nim_nidn: '', password });
+    setLoginMethod('email');
   };
 
   return (
@@ -54,7 +68,7 @@ export default function LoginPage() {
             Or{' '}
             <Link
               href="/register"
-              className="font-medium text-blue-600 hover:text-blue-500"
+              className="font-medium text-[#009846] hover:text-[#007a36]"
             >
               create a new account
             </Link>
@@ -62,42 +76,24 @@ export default function LoginPage() {
         </div>
 
         {/* Demo Credentials Section */}
-        <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+        <div className="bg-[#e6f4ec] border border-[#b2e5c7] rounded-md p-4">
           <div className="flex items-center mb-3">
-            <UserIcon className="h-5 w-5 text-blue-600 mr-2" />
-            <h3 className="text-sm font-medium text-blue-800">Demo Accounts</h3>
+            <UserIcon className="h-5 w-5 text-[#009846] mr-2" />
+            <h3 className="text-sm font-medium text-[#007a36]">Demo Accounts</h3>
           </div>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between items-center">
-              <div>
-                <span className="font-medium text-blue-900">Admin:</span>
-                <span className="text-blue-700 ml-2">admin@demo.com</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleDemoLogin('admin@demo.com', 'password123')}
-                className="text-blue-600 hover:text-blue-800 font-medium text-xs"
-              >
-                Use
-              </button>
-            </div>
-            <div className="flex justify-between items-center">
-              <div>
-                <span className="font-medium text-blue-900">User:</span>
-                <span className="text-blue-700 ml-2">user@demo.com</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleDemoLogin('user@demo.com', 'password123')}
-                className="text-blue-600 hover:text-blue-800 font-medium text-xs"
-              >
-                Use
-              </button>
-            </div>
-            <div className="flex items-center mt-2 pt-2 border-t border-blue-200">
-              <KeyIcon className="h-4 w-4 text-blue-500 mr-1" />
-              <span className="text-blue-600 text-xs">Password for all demo accounts: <strong>password123</strong></span>
-            </div>
+          <div className="space-y-2">
+            <button
+              onClick={() => handleDemoLogin('admin@demo.com', 'password123')}
+              className="w-full text-left text-sm text-[#007a36] hover:text-[#005a27]"
+            >
+              Admin: admin@demo.com / password123
+            </button>
+            <button
+              onClick={() => handleDemoLogin('user@demo.com', 'password123')}
+              className="w-full text-left text-sm text-[#007a36] hover:text-[#005a27]"
+            >
+              User: user@demo.com / password123
+            </button>
           </div>
         </div>
 
@@ -107,23 +103,66 @@ export default function LoginPage() {
               <div className="text-sm text-red-700">{error}</div>
             </div>
           )}
+
+          {/* Login Method Toggle */}
+          <div className="flex space-x-4">
+            <button
+              type="button"
+              onClick={() => setLoginMethod('email')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium ${loginMethod === 'email'
+                ? 'bg-[#009846] text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+            >
+              Email
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoginMethod('nim_nidn')}
+              className={`flex-1 py-2 px-4 rounded-md text-sm font-medium ${loginMethod === 'nim_nidn'
+                ? 'bg-[#009846] text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+            >
+              NIM/NIDN
+            </button>
+          </div>
+
           <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="email" className="sr-only">
-                Email address
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Email address"
-                value={formData.email}
-                onChange={handleChange}
-              />
-            </div>
+            {loginMethod === 'email' ? (
+              <div>
+                <label htmlFor="email" className="sr-only">
+                  Email address
+                </label>
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-[#009846] focus:border-[#009846] focus:z-10 sm:text-sm"
+                  placeholder="Email address"
+                  value={formData.email}
+                  onChange={handleChange}
+                />
+              </div>
+            ) : (
+              <div>
+                <label htmlFor="nim_nidn" className="sr-only">
+                  NIM/NIDN
+                </label>
+                <input
+                  id="nim_nidn"
+                  name="nim_nidn"
+                  type="text"
+                  required
+                  className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-[#009846] focus:border-[#009846] focus:z-10 sm:text-sm"
+                  placeholder="NIM/NIDN"
+                  value={formData.nim_nidn}
+                  onChange={handleChange}
+                />
+              </div>
+            )}
             <div>
               <label htmlFor="password" className="sr-only">
                 Password
@@ -134,7 +173,7 @@ export default function LoginPage() {
                 type="password"
                 autoComplete="current-password"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-[#009846] focus:border-[#009846] focus:z-10 sm:text-sm"
                 placeholder="Password"
                 value={formData.password}
                 onChange={handleChange}
@@ -142,14 +181,30 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <div>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoading ? 'Signing in...' : 'Sign in'}
-            </button>
+          <div className="flex flex-col gap-3 mt-6">
+            <div className="flex flex-row gap-4">
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="flex-1 py-3 text-base font-semibold rounded-md text-white bg-[#009846] hover:bg-[#007a36] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#009846] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {isLoading ? 'Signing in...' : 'Sign in'}
+              </button>
+              <Link
+                href="/register"
+                className="flex-1 py-3 text-base font-semibold rounded-md text-center text-white bg-[#38b36c] hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-all"
+              >
+                Sign up
+              </Link>
+            </div>
+            <div className="flex justify-end mt-2">
+              <Link
+                href="/forgot-password"
+                className="text-sm text-[#009846] hover:text-[#007a36] font-medium"
+              >
+                Forgot password?
+              </Link>
+            </div>
           </div>
         </form>
       </div>

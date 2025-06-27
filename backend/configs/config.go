@@ -23,7 +23,8 @@ type DatabaseConfig struct {
 }
 
 type ServerConfig struct {
-	Port string
+	Port    string
+	BaseURL string
 }
 
 type JWTConfig struct {
@@ -31,8 +32,8 @@ type JWTConfig struct {
 }
 
 type UploadConfig struct {
-	Path           string
-	MaxUploadSize  int64
+	Path          string
+	MaxUploadSize int64
 }
 
 func LoadConfig() *Config {
@@ -45,15 +46,16 @@ func LoadConfig() *Config {
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     getEnv("DB_PORT", "3306"),
-			Name:     getEnv("DB_NAME", "test_db2"),
-			User:     getEnv("DB_USER", "e_repositori"),
-			Password: getEnv("DB_PASSWORD", "secure_password_here"),
+			User:     getEnv("DB_USER", "root"),
+			Password: getEnv("DB_PASSWORD", "rootpassword"),
+			Name:     getEnv("DB_NAME", "e_repository_db"),
 		},
 		Server: ServerConfig{
-			Port: getEnv("PORT", "8080"),
+			Port:    getEnv("PORT", "8080"),
+			BaseURL: getEnv("BASE_URL", "http://localhost:8080"),
 		},
 		JWT: JWTConfig{
-			Secret: getEnv("JWT_SECRET", "your_jwt_secret_key_here"),
+			Secret: getEnv("JWT_SECRET", "your_secure_jwt_secret_key_here"),
 		},
 		Upload: UploadConfig{
 			Path:          getEnv("UPLOAD_PATH", "./uploads"),
@@ -67,4 +69,4 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-} 
+}

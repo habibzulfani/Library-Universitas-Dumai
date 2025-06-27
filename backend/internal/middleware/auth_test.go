@@ -49,10 +49,10 @@ func (suite *AuthMiddlewareTestSuite) SetupTest() {
 
 	// Create test user
 	suite.user = models.User{
-		Email:    "test@example.com",
-		Name:     "Test User",
-		Password: "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi", // password123
-		Role:     "user",
+		Email:        "test@example.com",
+		Name:         "Test User",
+		PasswordHash: "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi", // password123
+		Role:         "user",
 	}
 	suite.db.Create(&suite.user)
 
@@ -163,10 +163,10 @@ func (suite *AuthMiddlewareTestSuite) TestAuthMiddleware_UserNotFound() {
 func (suite *AuthMiddlewareTestSuite) TestAdminMiddleware_AdminUser() {
 	// Create admin user
 	adminUser := models.User{
-		Email:    "admin@example.com",
-		Name:     "Admin User",
-		Password: "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi", // password123
-		Role:     "admin",
+		Email:        "admin@example.com",
+		Name:         "Admin User",
+		PasswordHash: "$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi", // password123
+		Role:         "admin",
 	}
 	suite.db.Create(&adminUser)
 
@@ -424,4 +424,4 @@ func cleanupTestData(db *gorm.DB) {
 	db.Exec("DELETE FROM categories")
 	db.Exec("DELETE FROM users")
 	db.Exec("DELETE FROM counters")
-} 
+}

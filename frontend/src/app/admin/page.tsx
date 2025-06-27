@@ -2,12 +2,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { api } from '@/lib/api';
+import { api, authAPI, publicAPI, adminAPI } from '@/lib/api';
 import Link from 'next/link';
-import { 
-  BookOpenIcon, 
-  DocumentTextIcon, 
-  UserGroupIcon, 
+import {
+  BookOpenIcon,
+  DocumentTextIcon,
+  UserGroupIcon,
   ChartBarIcon,
   PlusIcon,
   PencilIcon,
@@ -18,8 +18,16 @@ import {
   ArrowDownTrayIcon,
   ExclamationTriangleIcon,
   CloudArrowUpIcon,
-  CheckIcon
+  CheckIcon,
+  AcademicCapIcon
 } from '@heroicons/react/24/outline';
+import { useToast } from '@chakra-ui/react';
+
+// Add imports at the top
+import BookForm from '@/components/forms/BookForm';
+import PaperForm from '@/components/forms/PaperForm';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import LecturerApproval from '@/components/admin/LecturerApproval';
 
 interface Stats {
   totalBooks: number;
@@ -41,30 +49,76 @@ interface Book {
   summary?: string;
   file_url?: string;
   created_at: string;
+  updated_at: string;
+  authors: { id: number; author_name: string }[];
 }
 
 interface Paper {
   id: number;
   title: string;
   author: string;
+  authors: { id: number; author_name: string }[];
+  abstract: string;
+  keywords: string;
+  journal: string;
+  pages: string;
+  year?: number;
   advisor?: string;
   university?: string;
   department?: string;
-  year?: number;
-  abstract?: string;
-  keywords?: string;
+  issn?: string;
+  volume?: number;
+  issue?: number;
+  doi?: string;
   file_url?: string;
+  cover_image_url?: string;
   created_at: string;
+  updated_at: string;
 }
 
 interface User {
   id: number;
-  email: string;
   name: string;
-  nim?: string;
-  jurusan?: string;
-  role: string;
+  email: string;
+  role: 'admin' | 'user';
+  user_type: 'student' | 'lecturer';
+  nim_nidn: string;
+  faculty: string;
+  department_id: number;
+  email_verified: boolean;
+  is_approved: boolean;
   created_at: string;
+}
+
+interface BookFormData {
+  title: string;
+  author: string;
+  authors: string[];
+  publisher: string;
+  published_year: number;
+  isbn: string;
+  subject: string;
+  language: string;
+  pages: number;
+  summary: string;
+}
+
+interface PaperFormData {
+  title: string;
+  author: string;
+  authors: string[];
+  advisor: string;
+  university: string;
+  department: string;
+  year: number;
+  issn: string;
+  journal: string;
+  volume: number;
+  issue: number;
+  pages: string;
+  doi: string;
+  abstract: string;
+  keywords: string;
 }
 
 export default function AdminPage() {
@@ -77,13 +131,26 @@ export default function AdminPage() {
   });
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isLoading, setIsLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [bookSearch, setBookSearch] = useState('');
+  const [paperSearch, setPaperSearch] = useState('');
+  const [userSearch, setUserSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  
+
+  // Pagination states
+  const [booksPage, setBooksPage] = useState(1);
+  const [booksTotalPages, setBooksTotalPages] = useState(0);
+  const [booksTotal, setBooksTotal] = useState(0);
+  const [papersPage, setPapersPage] = useState(1);
+  const [papersTotalPages, setPapersTotalPages] = useState(0);
+  const [papersTotal, setPapersTotal] = useState(0);
+  const [usersPage, setUsersPage] = useState(1);
+  const [usersTotalPages, setUsersTotalPages] = useState(0);
+  const [usersTotal, setUsersTotal] = useState(0);
+
   // Form states
   const [showBookForm, setShowBookForm] = useState(false);
   const [showPaperForm, setShowPaperForm] = useState(false);
@@ -94,23 +161,103 @@ export default function AdminPage() {
   // File upload states
   const [bookFile, setBookFile] = useState<File | null>(null);
   const [paperFile, setPaperFile] = useState<File | null>(null);
+  // Add cover image state
+  const [bookCoverFile, setBookCoverFile] = useState<File | null>(null);
+  const [paperCoverFile, setPaperCoverFile] = useState<File | null>(null);
+
+  // Bulk delete states
+  const [selectedBooks, setSelectedBooks] = useState<number[]>([]);
+  const [selectedPapers, setSelectedPapers] = useState<number[]>([]);
+  const [selectedUsers, setSelectedUsers] = useState<number[]>([]);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState<{ type: 'book' | 'paper' | 'user'; count: number } | null>(null);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   // Form data states
-  const [bookFormData, setBookFormData] = useState({
-    title: '', author: '', publisher: '', published_year: new Date().getFullYear(),
-    isbn: '', subject: '', language: 'English', pages: 0, summary: ''
+  const [bookFormData, setBookFormData] = useState<BookFormData>({
+    title: '',
+    author: '',
+    authors: [],
+    publisher: '',
+    published_year: new Date().getFullYear(),
+    isbn: '',
+    subject: '',
+    language: 'English',
+    pages: 0,
+    summary: ''
   });
-  const [paperFormData, setPaperFormData] = useState({
-    title: '', author: '', advisor: '', university: 'Universitas Dumai',
-    department: '', year: new Date().getFullYear(), abstract: '', keywords: ''
+  const [paperFormData, setPaperFormData] = useState<PaperFormData>({
+    title: '',
+    author: '',
+    authors: [],
+    advisor: '',
+    university: 'Universitas Dumai',
+    department: '',
+    year: new Date().getFullYear(),
+    issn: '',
+    journal: '',
+    volume: 0,
+    issue: 0,
+    pages: '',
+    doi: '',
+    abstract: '',
+    keywords: ''
   });
+
+  // Add state for editing user and user form
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [isUserSubmitting, setIsUserSubmitting] = useState(false);
+  const [showDeleteUserConfirm, setShowDeleteUserConfirm] = useState<{ id: number; name: string } | null>(null);
+  const [userFormData, setUserFormData] = useState<Partial<User>>({});
+
+  // Add state for add user modal and form
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [addUserForm, setAddUserForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: 'user' as 'user' | 'admin',
+    user_type: 'student' as 'student' | 'lecturer',
+    nim_nidn: '',
+    faculty: 'Fakultas Ilmu Komputer' as 'Fakultas Ekonomi' | 'Fakultas Ilmu Komputer' | 'Fakultas Hukum',
+    department_id: 1,
+  });
+  const [isAddUserSubmitting, setIsAddUserSubmitting] = useState(false);
+
+  // Add after addUserForm state:
+  const [departments, setDepartments] = useState<{ id: number; name: string }[]>([]);
+  const [isLoadingDepartments, setIsLoadingDepartments] = useState(false);
+
+  const toast = useToast();
+  const [pendingLecturerCount, setPendingLecturerCount] = useState(0);
+  const [lastPendingLecturerCount, setLastPendingLecturerCount] = useState(0);
+
+  // Fetch departments when faculty changes in add user form
+  useEffect(() => {
+    const fetchDepartments = async () => {
+      setIsLoadingDepartments(true);
+      try {
+        const response = await publicAPI.getDepartments(addUserForm.faculty);
+        setDepartments(response.data);
+        setAddUserForm(prev => ({ ...prev, department_id: response.data[0]?.id || 0 }));
+      } catch (err) {
+        setDepartments([]);
+        setAddUserForm(prev => ({ ...prev, department_id: 0 }));
+      } finally {
+        setIsLoadingDepartments(false);
+      }
+    };
+    if (addUserForm.faculty) {
+      fetchDepartments();
+    }
+  }, [addUserForm.faculty]);
 
   useEffect(() => {
     if (isAuthenticated && isAdmin) {
       loadStats();
-      if (activeTab === 'books') loadBooks();
-      if (activeTab === 'papers') loadPapers();
-      if (activeTab === 'users') loadUsers();
+      if (activeTab === 'books') loadBooks(1, bookSearch);
+      if (activeTab === 'papers') loadPapers(1, paperSearch);
+      if (activeTab === 'users') loadUsers(1, userSearch);
     }
   }, [isAuthenticated, isAdmin, activeTab]);
 
@@ -124,210 +271,387 @@ export default function AdminPage() {
     }
   }, [error, successMessage]);
 
+  // Poll for pending lecturers every 15 seconds
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    const fetchPendingLecturers = async () => {
+      try {
+        const response = await adminAPI.getPendingLecturers();
+        const count = Array.isArray(response.data) ? response.data.length : 0;
+        setPendingLecturerCount(count);
+        if (count > lastPendingLecturerCount) {
+          toast({
+            title: 'New lecturer registration',
+            description: 'There are new lecturers pending approval.',
+            status: 'info',
+            duration: 5000,
+            isClosable: true,
+          });
+        }
+        setLastPendingLecturerCount(count);
+      } catch { }
+    };
+    fetchPendingLecturers();
+    interval = setInterval(fetchPendingLecturers, 15000);
+    return () => clearInterval(interval);
+  }, [lastPendingLecturerCount, toast]);
+
   const loadStats = async () => {
     try {
       setIsLoading(true);
-      const [booksRes, papersRes] = await Promise.all([
+      const [booksRes, papersRes, usersRes, downloadsRes] = await Promise.all([
         api.get('/books'),
-        api.get('/papers')
-      ]);
-      
-      setStats({
-        totalBooks: booksRes.data.total || booksRes.data.length || 0,
-        totalPapers: papersRes.data.total || papersRes.data.length || 0,
-        totalUsers: 150,
-        totalDownloads: 850
+        api.get('/papers'),
+        api.get('/users/count'),
+        api.get('/downloads/count')
+      ]).catch(error => {
+        throw new Error('Failed to fetch dashboard statistics: ' + (error.response?.data?.message || error.message));
       });
-    } catch (error) {
-      setError('Failed to load dashboard statistics');
+
+      setStats({
+        totalBooks: booksRes.data.total || 0,
+        totalPapers: papersRes.data.total || 0,
+        totalUsers: usersRes.data.count || 0,
+        totalDownloads: downloadsRes.data.count || 0
+      });
+    } catch (error: any) {
+      setError(error.message || 'Failed to load dashboard statistics');
       console.error('Error loading stats:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const loadBooks = async () => {
+  const loadBooks = async (page: number = 1, search: string = '') => {
     try {
       setIsLoading(true);
-      const response = await api.get('/books');
-      setBooks(response.data.data || response.data || []);
-    } catch (error) {
-      setError('Failed to load books');
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: '12',
+        ...(search && { query: search })
+      });
+
+      const response = await api.get(`/admin/books?${params}`).catch(error => {
+        throw new Error('Failed to fetch books: ' + (error.response?.data?.message || error.message));
+      });
+
+      setBooks(response.data.data || []);
+      setBooksTotalPages(response.data.total_pages || 0);
+      setBooksTotal(response.data.total || 0);
+      setBooksPage(page);
+    } catch (error: any) {
+      setError(error.message || 'Failed to load books');
       console.error('Error loading books:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const loadPapers = async () => {
+  const loadPapers = async (page: number = 1, search: string = '') => {
     try {
       setIsLoading(true);
-      const response = await api.get('/papers');
-      setPapers(response.data.data || response.data || []);
-    } catch (error) {
-      setError('Failed to load papers');
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: '12',
+        ...(search && { query: search })
+      });
+
+      const response = await api.get(`/admin/papers?${params}`).catch(error => {
+        throw new Error('Failed to fetch papers: ' + (error.response?.data?.message || error.message));
+      });
+
+      setPapers(response.data.data || []);
+      setPapersTotalPages(response.data.total_pages || 0);
+      setPapersTotal(response.data.total || 0);
+      setPapersPage(page);
+    } catch (error: any) {
+      setError(error.message || 'Failed to load papers');
       console.error('Error loading papers:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const loadUsers = async () => {
+  const loadUsers = async (page: number = 1, search: string = '') => {
     try {
       setIsLoading(true);
-      setUsers([
-        { id: 1, email: 'admin@demo.com', name: 'Administrator', role: 'admin', created_at: '2025-01-01' },
-        { id: 2, email: 'user@demo.com', name: 'Regular User', role: 'user', created_at: '2025-01-02' },
-        { id: 3, email: 'john.smith@demo.com', name: 'John Smith', nim: '12345', jurusan: 'Computer Science', role: 'user', created_at: '2025-01-03' }
-      ]);
-    } catch (error) {
-      setError('Failed to load users');
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: '12',
+        ...(search && { query: search })
+      });
+
+      const response = await api.get(`/admin/users?${params}`).catch(error => {
+        throw new Error('Failed to fetch users: ' + (error.response?.data?.message || error.message));
+      });
+
+      setUsers(response.data.data || []);
+      setUsersTotalPages(response.data.total_pages || 0);
+      setUsersTotal(response.data.total || 0);
+      setUsersPage(page);
+    } catch (error: any) {
+      setError(error.message || 'Failed to load users');
       console.error('Error loading users:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleCreateBook = async (e: React.FormEvent) => {
+  // Search handlers
+  const handleBookSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const formData = new FormData();
-      Object.entries(bookFormData).forEach(([key, value]) => {
-        if (value !== '' && value !== 0) {
-          formData.append(key, value.toString());
-        }
-      });
-      
-      if (bookFile) {
-        formData.append('file', bookFile);
-      }
+    setBooksPage(1);
+    loadBooks(1, bookSearch);
+  };
 
-      await api.post('/admin/books', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      setSuccessMessage('Book created successfully!');
-      resetBookForm();
-      loadBooks();
-    } catch (error) {
-      setError('Failed to create book');
-      console.error('Error creating book:', error);
+  const handlePaperSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPapersPage(1);
+    loadPapers(1, paperSearch);
+  };
+
+  const handleUserSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setUsersPage(1);
+    loadUsers(1, userSearch);
+  };
+
+  // Pagination handlers
+  const handleBooksPageChange = (page: number) => {
+    setBooksPage(page);
+    loadBooks(page, bookSearch);
+  };
+
+  const handlePapersPageChange = (page: number) => {
+    setPapersPage(page);
+    loadPapers(page, paperSearch);
+  };
+
+  const handleUsersPageChange = (page: number) => {
+    setUsersPage(page);
+    loadUsers(page, userSearch);
+  };
+
+  const validateFile = (file: File) => {
+    const maxSize = 32 * 1024 * 1024; // 32MB
+    const allowedTypes = ['.pdf', '.doc', '.docx'];
+
+    if (file.size > maxSize) {
+      throw new Error('File size must be less than 32MB');
+    }
+
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (!allowedTypes.includes(`.${extension}`)) {
+      throw new Error('Invalid file type. Only PDF, DOC, and DOCX files are allowed');
     }
   };
 
-  const handleUpdateBook = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingBook) return;
-    
+  const handleFileUpload = async (file: File, type: 'book' | 'paper') => {
     try {
+      validateFile(file);
       const formData = new FormData();
-      Object.entries(bookFormData).forEach(([key, value]) => {
-        if (value !== '' && value !== 0) {
-          formData.append(key, value.toString());
-        }
-      });
-      
-      if (bookFile) {
-        formData.append('file', bookFile);
-      }
+      formData.append('file', file);
 
-      await api.put(`/admin/books/${editingBook.id}`, formData, {
+      const response = await api.post(`/upload/${type}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
-      setSuccessMessage('Book updated successfully!');
-      resetBookForm();
-      loadBooks();
-    } catch (error) {
-      setError('Failed to update book');
-      console.error('Error updating book:', error);
+
+      return response.data.fileUrl;
+    } catch (error: any) {
+      throw new Error('File upload failed: ' + (error.message || 'Unknown error'));
+    }
+  };
+
+  const logActivity = async (action: string, itemId: number, itemType: 'book' | 'paper') => {
+    try {
+      await api.post('/activity-logs', {
+        action,
+        item_id: itemId,
+        item_type: itemType
+      });
+    } catch (error: any) {
+      console.error('Failed to log activity:', error);
     }
   };
 
   const handleDeleteBook = async (id: number) => {
     try {
-      await api.delete(`/admin/books/${id}`);
-      setSuccessMessage('Book deleted successfully!');
+      await api.delete(`/books/${id}`);
+      await logActivity('delete_book', id, 'book');
+      setSuccessMessage('Book deleted successfully');
       setBooks(books.filter(book => book.id !== id));
       setShowDeleteConfirm(null);
-    } catch (error) {
+    } catch (error: any) {
       setError('Failed to delete book');
       console.error('Error deleting book:', error);
     }
   };
 
-  const handleCreatePaper = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const formData = new FormData();
-      Object.entries(paperFormData).forEach(([key, value]) => {
-        if (value !== '' && value !== 0) {
-          formData.append(key, value.toString());
-        }
-      });
-      
-      if (paperFile) {
-        formData.append('file', paperFile);
-      }
-
-      await api.post('/admin/papers', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      setSuccessMessage('Paper created successfully!');
-      resetPaperForm();
-      loadPapers();
-    } catch (error) {
-      setError('Failed to create paper');
-      console.error('Error creating paper:', error);
-    }
-  };
-
-  const handleUpdatePaper = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingPaper) return;
-    
-    try {
-      const formData = new FormData();
-      Object.entries(paperFormData).forEach(([key, value]) => {
-        if (value !== '' && value !== 0) {
-          formData.append(key, value.toString());
-        }
-      });
-      
-      if (paperFile) {
-        formData.append('file', paperFile);
-      }
-
-      await api.put(`/admin/papers/${editingPaper.id}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      
-      setSuccessMessage('Paper updated successfully!');
-      resetPaperForm();
-      loadPapers();
-    } catch (error) {
-      setError('Failed to update paper');
-      console.error('Error updating paper:', error);
-    }
-  };
-
   const handleDeletePaper = async (id: number) => {
     try {
-      await api.delete(`/admin/papers/${id}`);
-      setSuccessMessage('Paper deleted successfully!');
+      await api.delete(`/papers/${id}`);
+      await logActivity('delete_paper', id, 'paper');
+      setSuccessMessage('Paper deleted successfully');
       setPapers(papers.filter(paper => paper.id !== id));
       setShowDeleteConfirm(null);
-    } catch (error) {
+    } catch (error: any) {
       setError('Failed to delete paper');
       console.error('Error deleting paper:', error);
     }
   };
 
+  const validateBookForm = () => {
+    const errors: string[] = [];
+
+    if (!bookFormData.title.trim()) {
+      errors.push('Title is required');
+    }
+    if (!bookFormData.author.trim() && (!bookFormData.authors || bookFormData.authors.length === 0)) {
+      errors.push('At least one author is required');
+    }
+    if (!bookFormData.publisher.trim()) {
+      errors.push('Publisher is required');
+    }
+    if (!bookFormData.published_year) {
+      errors.push('Published year is required');
+    }
+    if (bookFormData.published_year && (bookFormData.published_year < 1800 || bookFormData.published_year > new Date().getFullYear())) {
+      errors.push('Published year must be between 1800 and current year');
+    }
+    if (!bookFormData.subject.trim()) {
+      errors.push('Subject is required');
+    }
+    if (!bookFormData.language.trim()) {
+      errors.push('Language is required');
+    }
+    if (!bookFormData.pages || bookFormData.pages <= 0) {
+      errors.push('Number of pages must be greater than 0');
+    }
+    if (!bookFormData.summary.trim()) {
+      errors.push('Summary is required');
+    }
+    if (!editingBook && !bookFile) {
+      errors.push('Book file is required for new books');
+    }
+
+    return errors;
+  };
+
+  const validatePaperForm = () => {
+    const errors: string[] = [];
+
+    if (!paperFormData.title.trim()) {
+      errors.push('Title is required');
+    }
+    if (!paperFormData.author.trim() && (!paperFormData.authors || paperFormData.authors.length === 0)) {
+      errors.push('At least one author is required');
+    }
+    if (!paperFormData.advisor.trim()) {
+      errors.push('Advisor is required');
+    }
+    if (!paperFormData.university.trim()) {
+      errors.push('University is required');
+    }
+    if (!paperFormData.department.trim()) {
+      errors.push('Department is required');
+    }
+    if (!paperFormData.year || paperFormData.year < 1800 || paperFormData.year > new Date().getFullYear()) {
+      errors.push('Year must be between 1800 and current year');
+    }
+    if (!paperFormData.abstract.trim()) {
+      errors.push('Abstract is required');
+    }
+    if (!paperFormData.keywords.trim()) {
+      errors.push('Keywords are required');
+    }
+    if (!editingPaper && !paperFile) {
+      errors.push('Paper file is required for new papers');
+    }
+
+    return errors;
+  };
+
+  const handleBookSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessMessage(null);
+    setIsLoading(true);
+    try {
+      let fileUrl = bookFile ? await handleFileUpload(bookFile, 'book') : undefined;
+      let coverImageUrl = bookCoverFile ? await handleFileUpload(bookCoverFile, 'book') : undefined;
+      const bookData = {
+        ...bookFormData,
+        file_url: fileUrl,
+        cover_image_url: coverImageUrl
+      };
+      if (editingBook) {
+        await api.put(`/admin/books/${editingBook.id}`, bookData);
+        await logActivity('update_book', editingBook.id, 'book');
+        setSuccessMessage('Book updated successfully');
+      } else {
+        const response = await api.post('/admin/books', bookData);
+        await logActivity('create_book', response.data.id, 'book');
+        setSuccessMessage('Book added successfully');
+      }
+      resetBookForm();
+      loadBooks();
+    } catch (err: any) {
+      setError('Failed to save book.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePaperSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessMessage(null);
+    setIsLoading(true);
+    try {
+      let fileUrl = paperFile ? await handleFileUpload(paperFile, 'paper') : undefined;
+      let coverImageUrl = paperCoverFile ? await handleFileUpload(paperCoverFile, 'paper') : undefined;
+      const payload = {
+        ...paperFormData,
+        authors: paperFormData.authors,
+        issn: paperFormData.issn,
+        journal: paperFormData.journal,
+        volume: paperFormData.volume,
+        issue: paperFormData.issue,
+        pages: paperFormData.pages,
+        doi: paperFormData.doi,
+        file_url: fileUrl,
+        cover_image_url: coverImageUrl
+      };
+      if (editingPaper) {
+        await api.put(`/admin/papers/${editingPaper.id}`, payload);
+        await logActivity('update_paper', editingPaper.id, 'paper');
+        setSuccessMessage('Paper updated successfully');
+      } else {
+        const response = await api.post('/admin/papers', payload);
+        await logActivity('create_paper', response.data.id, 'paper');
+        setSuccessMessage('Paper added successfully');
+      }
+      resetPaperForm();
+      loadPapers();
+    } catch (err: any) {
+      setError('Failed to save paper.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const resetBookForm = () => {
     setBookFormData({
-      title: '', author: '', publisher: '', published_year: new Date().getFullYear(),
-      isbn: '', subject: '', language: 'English', pages: 0, summary: ''
+      title: '',
+      author: '',
+      authors: [],
+      publisher: '',
+      published_year: new Date().getFullYear(),
+      isbn: '',
+      subject: '',
+      language: 'English',
+      pages: 0,
+      summary: ''
     });
     setBookFile(null);
     setShowBookForm(false);
@@ -335,63 +659,395 @@ export default function AdminPage() {
   };
 
   const resetPaperForm = () => {
+    setEditingPaper(null);
     setPaperFormData({
-      title: '', author: '', advisor: '', university: 'Universitas Dumai',
-      department: '', year: new Date().getFullYear(), abstract: '', keywords: ''
+      title: '',
+      author: '',
+      authors: [],
+      advisor: '',
+      university: 'Universitas Dumai',
+      department: '',
+      year: new Date().getFullYear(),
+      issn: '',
+      journal: '',
+      volume: 0,
+      issue: 0,
+      pages: '',
+      doi: '',
+      abstract: '',
+      keywords: ''
     });
     setPaperFile(null);
+    setPaperCoverFile(null);
     setShowPaperForm(false);
-    setEditingPaper(null);
   };
 
   const startEditBook = (book: Book) => {
     setEditingBook(book);
-    setBookFormData({
-      title: book.title,
-      author: book.author,
-      publisher: book.publisher || '',
-      published_year: book.published_year || new Date().getFullYear(),
-      isbn: book.isbn || '',
-      subject: book.subject || '',
-      language: book.language || 'English',
-      pages: book.pages || 0,
-      summary: book.summary || ''
-    });
     setShowBookForm(true);
+  };
+
+  const handleBookSuccess = () => {
+    setShowBookForm(false);
+    setEditingBook(null);
+    loadBooks();
   };
 
   const startEditPaper = (paper: Paper) => {
     setEditingPaper(paper);
-    setPaperFormData({
-      title: paper.title,
-      author: paper.author,
-      advisor: paper.advisor || '',
-      university: paper.university || 'Universitas Dumai',
-      department: paper.department || '',
-      year: paper.year || new Date().getFullYear(),
-      abstract: paper.abstract || '',
-      keywords: paper.keywords || ''
-    });
     setShowPaperForm(true);
   };
 
-  const filteredBooks = books.filter(book =>
-    book.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    book.author.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    book.subject?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handlePaperSuccess = () => {
+    setShowPaperForm(false);
+    setEditingPaper(null);
+    loadPapers();
+  };
 
-  const filteredPapers = papers.filter(paper =>
-    paper.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    paper.author.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    paper.department?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Enhanced filteredBooks
+  const filteredBooks = books.filter(book => {
+    const search = bookSearch.toLowerCase();
+    return (
+      book.title.toLowerCase().includes(search) ||
+      book.author.toLowerCase().includes(search) ||
+      (book.authors && book.authors.some(a => a.author_name.toLowerCase().includes(search))) ||
+      (book.publisher && book.publisher.toLowerCase().includes(search)) ||
+      (book.published_year && book.published_year.toString().includes(search)) ||
+      (book.isbn && book.isbn.toLowerCase().includes(search)) ||
+      (book.subject && book.subject.toLowerCase().includes(search)) ||
+      (book.language && book.language.toLowerCase().includes(search)) ||
+      (book.summary && book.summary.toLowerCase().includes(search))
+    );
+  });
 
-  const filteredUsers = users.filter(user =>
-    user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.role.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Enhanced filteredPapers
+  const filteredPapers = papers.filter(paper => {
+    const search = paperSearch.toLowerCase();
+    return (
+      paper.title.toLowerCase().includes(search) ||
+      paper.author.toLowerCase().includes(search) ||
+      (paper.authors && paper.authors.some(a => a.author_name.toLowerCase().includes(search))) ||
+      (paper.advisor && paper.advisor.toLowerCase().includes(search)) ||
+      (paper.university && paper.university.toLowerCase().includes(search)) ||
+      (paper.department && paper.department.toLowerCase().includes(search)) ||
+      (paper.year && paper.year.toString().includes(search)) ||
+      (paper.journal && paper.journal.toLowerCase().includes(search)) ||
+      (paper.volume && paper.volume.toString().includes(search)) ||
+      (paper.issue && paper.issue.toString().includes(search)) ||
+      (paper.pages && paper.pages.toLowerCase().includes(search)) ||
+      (paper.doi && paper.doi.toLowerCase().includes(search)) ||
+      (paper.abstract && paper.abstract.toLowerCase().includes(search)) ||
+      (paper.keywords && paper.keywords.toLowerCase().includes(search))
+    );
+  });
+
+  // Add after departments state
+  useEffect(() => {
+    if (activeTab === 'users' && departments.length === 0) {
+      publicAPI.getDepartments().then(res => {
+        setDepartments(res.data);
+      }).catch(() => setDepartments([]));
+    }
+  }, [activeTab, departments.length]);
+
+  // Helper to get department name by id
+  const getDepartmentName = (id: number) => {
+    const dep = departments.find(d => d.id === id);
+    return dep ? dep.name : '';
+  };
+
+  // Update filteredUsers to include nim/nidn and department name
+  const filteredUsers = users.filter(user => {
+    const search = userSearch.toLowerCase();
+    return (
+      user.name.toLowerCase().includes(search) ||
+      user.email.toLowerCase().includes(search) ||
+      user.role.toLowerCase().includes(search) ||
+      (user.nim_nidn && user.nim_nidn.toLowerCase().includes(search)) ||
+      getDepartmentName(user.department_id).toLowerCase().includes(search)
+    );
+  });
+
+  const approveUser = async (userId: number) => {
+    try {
+      await api.put(`/admin/users/${userId}/approve`);
+      setSuccessMessage('User approved successfully');
+      loadUsers();
+    } catch (error) {
+      setError('Failed to approve user');
+    }
+  };
+
+  const updateUserRole = async (userId: number, newRole: 'admin' | 'user') => {
+    try {
+      const user = users.find(u => u.id === userId);
+      if (!user) throw new Error('User not found');
+      await authAPI.updateUser(userId, {
+        name: user.name,
+        email: user.email,
+        role: newRole,
+        user_type: user.user_type,
+        nim_nidn: user.nim_nidn,
+        faculty: user.faculty as 'Fakultas Ekonomi' | 'Fakultas Ilmu Komputer' | 'Fakultas Hukum' | undefined,
+        department_id: user.department_id,
+        is_approved: user.is_approved,
+      });
+      setSuccessMessage('User role updated successfully');
+      loadUsers();
+    } catch (error) {
+      setError('Failed to update user role');
+    }
+  };
+
+  // Bulk delete handlers
+  const handleSelectAllBooks = (checked: boolean) => {
+    if (checked) {
+      setSelectedBooks(filteredBooks.map(book => book.id));
+    } else {
+      setSelectedBooks([]);
+    }
+  };
+
+  const handleSelectBook = (bookId: number, checked: boolean) => {
+    if (checked) {
+      setSelectedBooks(prev => [...prev, bookId]);
+    } else {
+      setSelectedBooks(prev => prev.filter(id => id !== bookId));
+    }
+  };
+
+  const handleSelectAllPapers = (checked: boolean) => {
+    if (checked) {
+      setSelectedPapers(filteredPapers.map(paper => paper.id));
+    } else {
+      setSelectedPapers([]);
+    }
+  };
+
+  const handleSelectPaper = (paperId: number, checked: boolean) => {
+    if (checked) {
+      setSelectedPapers(prev => [...prev, paperId]);
+    } else {
+      setSelectedPapers(prev => prev.filter(id => id !== paperId));
+    }
+  };
+
+  const handleSelectAllUsers = (checked: boolean) => {
+    if (checked) {
+      setSelectedUsers(filteredUsers.map(user => user.id));
+    } else {
+      setSelectedUsers([]);
+    }
+  };
+
+  const handleSelectUser = (userId: number, checked: boolean) => {
+    if (checked) {
+      setSelectedUsers(prev => [...prev, userId]);
+    } else {
+      setSelectedUsers(prev => prev.filter(id => id !== userId));
+    }
+  };
+
+  const handleBulkDeleteBooks = async () => {
+    if (selectedBooks.length === 0) return;
+
+    setIsBulkDeleting(true);
+    try {
+      // Delete books one by one (or implement bulk delete API if available)
+      for (const bookId of selectedBooks) {
+        await api.delete(`/books/${bookId}`);
+        await logActivity('delete_book', bookId, 'book');
+      }
+      setSuccessMessage(`${selectedBooks.length} book(s) deleted successfully`);
+      setSelectedBooks([]);
+      loadBooks();
+    } catch (error: any) {
+      setError('Failed to delete some books');
+      console.error('Error bulk deleting books:', error);
+    } finally {
+      setIsBulkDeleting(false);
+      setShowBulkDeleteConfirm(null);
+    }
+  };
+
+  const handleBulkDeletePapers = async () => {
+    if (selectedPapers.length === 0) return;
+
+    setIsBulkDeleting(true);
+    try {
+      // Delete papers one by one (or implement bulk delete API if available)
+      for (const paperId of selectedPapers) {
+        await api.delete(`/papers/${paperId}`);
+        await logActivity('delete_paper', paperId, 'paper');
+      }
+      setSuccessMessage(`${selectedPapers.length} paper(s) deleted successfully`);
+      setSelectedPapers([]);
+      loadPapers();
+    } catch (error: any) {
+      setError('Failed to delete some papers');
+      console.error('Error bulk deleting papers:', error);
+    } finally {
+      setIsBulkDeleting(false);
+      setShowBulkDeleteConfirm(null);
+    }
+  };
+
+  const handleBulkDeleteUsers = async () => {
+    if (selectedUsers.length === 0) return;
+
+    setIsBulkDeleting(true);
+    try {
+      // Delete users one by one (or implement bulk delete API if available)
+      for (const userId of selectedUsers) {
+        await api.delete(`/admin/users/${userId}`);
+      }
+      setSuccessMessage(`${selectedUsers.length} user(s) deleted successfully`);
+      setSelectedUsers([]);
+      loadUsers();
+    } catch (error: any) {
+      setError('Failed to delete some users');
+      console.error('Error bulk deleting users:', error);
+    } finally {
+      setIsBulkDeleting(false);
+      setShowBulkDeleteConfirm(null);
+    }
+  };
+
+  // Reset selections when tab changes
+  useEffect(() => {
+    setShowBookForm(false);
+    setShowPaperForm(false);
+    setEditingBook(null);
+    setEditingPaper(null);
+    setBookSearch('');
+    setPaperSearch('');
+    setUserSearch('');
+    setSelectedBooks([]);
+    setSelectedPapers([]);
+    setSelectedUsers([]);
+  }, [activeTab]);
+
+  const tabColors: Record<string, string> = {
+    dashboard: 'bg-blue-500',
+    books: 'bg-indigo-500',
+    papers: 'bg-green-500',
+    users: 'bg-purple-500',
+    'lecturer-approval': 'bg-yellow-500'
+  };
+
+  // Handler to start editing a user
+  const startEditUser = (user: User) => {
+    setEditingUser(user);
+    setUserFormData({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      user_type: user.user_type,
+      faculty: user.faculty,
+      department_id: user.department_id,
+      nim_nidn: user.nim_nidn,
+      is_approved: user.is_approved,
+    });
+    setShowUserForm(true);
+  };
+
+  // Handler to submit user edit
+  const handleUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setIsUserSubmitting(true);
+    try {
+      // Ensure faculty is one of the allowed values
+      const allowedFaculties = [
+        'Fakultas Ekonomi',
+        'Fakultas Ilmu Komputer',
+        'Fakultas Hukum',
+      ] as const;
+      let faculty: typeof allowedFaculties[number] | undefined = undefined;
+      if (
+        userFormData.faculty &&
+        allowedFaculties.includes(userFormData.faculty as typeof allowedFaculties[number])
+      ) {
+        faculty = userFormData.faculty as typeof allowedFaculties[number];
+      }
+      await authAPI.updateUser(editingUser.id, {
+        ...userFormData,
+        faculty,
+      });
+      setSuccessMessage('User updated successfully');
+      setShowUserForm(false);
+      setEditingUser(null);
+      loadUsers();
+    } catch (error) {
+      setError('Failed to update user');
+    } finally {
+      setIsUserSubmitting(false);
+    }
+  };
+
+  // Handler to delete user
+  const handleDeleteUser = async (id: number) => {
+    try {
+      await authAPI.deleteUser(id);
+      setSuccessMessage('User deleted successfully');
+      setShowDeleteUserConfirm(null);
+      loadUsers();
+    } catch (error) {
+      setError('Failed to delete user');
+    }
+  };
+
+  const handleAddUserChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setAddUserForm(prev => ({
+      ...prev,
+      [name]: name === 'department_id' ? parseInt(value, 10) : value
+    }));
+  };
+
+  const handleAddUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsAddUserSubmitting(true);
+    try {
+      await authAPI.adminRegister(addUserForm);
+      setSuccessMessage('User added successfully');
+      setShowAddUserModal(false);
+      setAddUserForm({
+        name: '',
+        email: '',
+        password: '',
+        role: 'user',
+        user_type: 'student',
+        nim_nidn: '',
+        faculty: 'Fakultas Ilmu Komputer',
+        department_id: 1,
+      });
+      loadUsers();
+    } catch (error) {
+      setError('Failed to add user');
+    } finally {
+      setIsAddUserSubmitting(false);
+    }
+  };
+
+  // Add after addUserForm useEffect for departments:
+  useEffect(() => {
+    if (!showUserForm) return;
+    const fetchDepartments = async () => {
+      setIsLoadingDepartments(true);
+      try {
+        const response = await publicAPI.getDepartments(userFormData.faculty);
+        setDepartments(response.data);
+      } catch (err) {
+        setDepartments([]);
+      } finally {
+        setIsLoadingDepartments(false);
+      }
+    };
+    if (userFormData.faculty) {
+      fetchDepartments();
+    }
+  }, [userFormData.faculty, showUserForm]);
 
   if (!isAuthenticated) {
     return (
@@ -404,7 +1060,7 @@ export default function AdminPage() {
           <p className="text-gray-600 mb-6">Please sign in to access the admin panel.</p>
           <Link
             href="/login"
-            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-[#38b36c] hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c]"
           >
             Sign In
           </Link>
@@ -424,7 +1080,7 @@ export default function AdminPage() {
           <p className="text-gray-600 mb-6">You need administrator privileges to access this page.</p>
           <Link
             href="/"
-            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-[#38b36c] hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c]"
           >
             Back to Home
           </Link>
@@ -441,7 +1097,7 @@ export default function AdminPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-4xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
-              <p className="text-lg text-gray-600">Manage your e-repository system</p>
+              <p className="text-lg text-gray-600">Manage your Universitas Dumai Library system</p>
             </div>
             <div className="hidden md:flex items-center space-x-4">
               <div className="bg-white rounded-lg px-4 py-2 shadow-sm">
@@ -495,19 +1151,24 @@ export default function AdminPage() {
                 { id: 'dashboard', name: 'Dashboard', icon: ChartBarIcon, color: 'blue' },
                 { id: 'books', name: 'Books', icon: BookOpenIcon, color: 'indigo' },
                 { id: 'papers', name: 'Papers', icon: DocumentTextIcon, color: 'green' },
-                { id: 'users', name: 'Users', icon: UserGroupIcon, color: 'purple' }
+                { id: 'users', name: 'Users', icon: UserGroupIcon, color: 'purple' },
+                { id: 'lecturer-approval', name: 'Lecturer Approval', icon: AcademicCapIcon, color: 'yellow' },
               ].map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center px-6 py-3 text-sm font-medium rounded-lg transition-all duration-200 ${
-                    activeTab === tab.id
-                      ? `bg-${tab.color}-500 text-white shadow-lg scale-105`
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                  }`}
+                  className={`flex items-center px-6 py-3 text-sm font-medium rounded-lg transition-all duration-200 ${activeTab === tab.id
+                    ? `${tabColors[tab.id]} text-white shadow-lg scale-105`
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
                 >
                   <tab.icon className="h-5 w-5 mr-3" />
                   {tab.name}
+                  {tab.id === 'lecturer-approval' && pendingLecturerCount > 0 && (
+                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-500 text-white">
+                      {pendingLecturerCount}
+                    </span>
+                  )}
                 </button>
               ))}
             </nav>
@@ -518,15 +1179,20 @@ export default function AdminPage() {
         {activeTab === 'dashboard' && (
           <div className="space-y-8">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 mb-6">Overview</h2>
-              
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">Dashboard Overview</h2>
+
               {isLoading ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                   {[1, 2, 3, 4].map((i) => (
                     <div key={i} className="bg-white p-6 rounded-xl shadow-sm animate-pulse">
-                      <div className="h-4 bg-gray-200 rounded mb-4"></div>
-                      <div className="h-8 bg-gray-200 rounded mb-2"></div>
-                      <div className="h-4 bg-gray-200 rounded"></div>
+                      <div className="flex items-center">
+                        <div className="p-3 bg-gray-200 rounded-xl h-14 w-14"></div>
+                        <div className="ml-4 flex-1">
+                          <div className="h-4 bg-gray-200 rounded w-24 mb-2"></div>
+                          <div className="h-8 bg-gray-200 rounded w-16 mb-1"></div>
+                          <div className="h-3 bg-gray-200 rounded w-32"></div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -534,52 +1200,52 @@ export default function AdminPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                   <div className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200">
                     <div className="flex items-center">
-                      <div className="p-3 bg-blue-100 rounded-xl">
-                        <BookOpenIcon className="h-8 w-8 text-blue-600" />
+                      <div className="p-3 bg-[#e6f4ec] rounded-xl">
+                        <BookOpenIcon className="h-8 w-8 text-[#38b36c]" />
                       </div>
                       <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Total Books</p>
                         <p className="text-3xl font-bold text-gray-900">{stats.totalBooks}</p>
-                        <p className="text-xs text-green-600 mt-1">↗ Active collection</p>
+                        <p className="text-xs text-[#38b36c] mt-1">↗ Active collection</p>
                       </div>
                     </div>
                   </div>
 
                   <div className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200">
                     <div className="flex items-center">
-                      <div className="p-3 bg-green-100 rounded-xl">
-                        <DocumentTextIcon className="h-8 w-8 text-green-600" />
+                      <div className="p-3 bg-[#e6f4ec] rounded-xl">
+                        <DocumentTextIcon className="h-8 w-8 text-[#38b36c]" />
                       </div>
                       <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Total Papers</p>
                         <p className="text-3xl font-bold text-gray-900">{stats.totalPapers}</p>
-                        <p className="text-xs text-green-600 mt-1">↗ Research archive</p>
+                        <p className="text-xs text-[#38b36c] mt-1">↗ Research archive</p>
                       </div>
                     </div>
                   </div>
 
                   <div className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200">
                     <div className="flex items-center">
-                      <div className="p-3 bg-purple-100 rounded-xl">
-                        <UserGroupIcon className="h-8 w-8 text-purple-600" />
+                      <div className="p-3 bg-[#e6f4ec] rounded-xl">
+                        <UserGroupIcon className="h-8 w-8 text-[#38b36c]" />
                       </div>
                       <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Total Users</p>
                         <p className="text-3xl font-bold text-gray-900">{stats.totalUsers}</p>
-                        <p className="text-xs text-blue-600 mt-1">↗ Registered members</p>
+                        <p className="text-xs text-[#38b36c] mt-1">↗ Registered members</p>
                       </div>
                     </div>
                   </div>
 
                   <div className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200">
                     <div className="flex items-center">
-                      <div className="p-3 bg-yellow-100 rounded-xl">
-                        <ArrowDownTrayIcon className="h-8 w-8 text-yellow-600" />
+                      <div className="p-3 bg-[#e6f4ec] rounded-xl">
+                        <ArrowDownTrayIcon className="h-8 w-8 text-[#38b36c]" />
                       </div>
                       <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Downloads</p>
                         <p className="text-3xl font-bold text-gray-900">{stats.totalDownloads}</p>
-                        <p className="text-xs text-green-600 mt-1">↗ Total downloads</p>
+                        <p className="text-xs text-[#38b36c] mt-1">↗ Total downloads</p>
                       </div>
                     </div>
                   </div>
@@ -596,29 +1262,29 @@ export default function AdminPage() {
                     setActiveTab('books');
                     setShowBookForm(true);
                   }}
-                  className="flex items-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors duration-200"
+                  className="flex items-center p-4 bg-[#e6f4ec] rounded-lg hover:bg-[#b2e5c7] transition-colors duration-200"
                 >
-                  <PlusIcon className="h-6 w-6 text-blue-600 mr-3" />
-                  <span className="font-medium text-blue-900">Add New Book</span>
+                  <PlusIcon className="h-6 w-6 text-[#38b36c] mr-3" />
+                  <span className="font-medium text-[#2e8c55]">Add New Book</span>
                 </button>
-                
+
                 <button
                   onClick={() => {
                     setActiveTab('papers');
                     setShowPaperForm(true);
                   }}
-                  className="flex items-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors duration-200"
+                  className="flex items-center p-4 bg-[#e6f4ec] rounded-lg hover:bg-[#b2e5c7] transition-colors duration-200"
                 >
-                  <PlusIcon className="h-6 w-6 text-green-600 mr-3" />
-                  <span className="font-medium text-green-900">Add New Paper</span>
+                  <PlusIcon className="h-6 w-6 text-[#38b36c] mr-3" />
+                  <span className="font-medium text-[#2e8c55]">Add New Paper</span>
                 </button>
-                
+
                 <button
                   onClick={() => setActiveTab('users')}
-                  className="flex items-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors duration-200"
+                  className="flex items-center p-4 bg-[#e6f4ec] rounded-lg hover:bg-[#b2e5c7] transition-colors duration-200"
                 >
-                  <EyeIcon className="h-6 w-6 text-purple-600 mr-3" />
-                  <span className="font-medium text-purple-900">View Users</span>
+                  <EyeIcon className="h-6 w-6 text-[#38b36c] mr-3" />
+                  <span className="font-medium text-[#2e8c55]">View Users</span>
                 </button>
               </div>
             </div>
@@ -629,184 +1295,6 @@ export default function AdminPage() {
         {activeTab === 'books' && (
           <div className="space-y-6">
             {/* Add/Edit Book Form */}
-            {showBookForm && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-xl font-semibold text-gray-900">
-                      {editingBook ? 'Edit Book' : 'Add New Book'}
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {editingBook ? 'Update book information' : 'Fill in the details to add a new book'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={resetBookForm}
-                    className="text-gray-400 hover:text-gray-600 p-2 hover:bg-gray-100 rounded-lg"
-                  >
-                    <XMarkIcon className="h-6 w-6" />
-                  </button>
-                </div>
-                
-                <form onSubmit={editingBook ? handleUpdateBook : handleCreateBook} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Title <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={bookFormData.title}
-                        onChange={(e) => setBookFormData({...bookFormData, title: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Enter book title"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Author <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={bookFormData.author}
-                        onChange={(e) => setBookFormData({...bookFormData, author: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Enter author name"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Publisher</label>
-                      <input
-                        type="text"
-                        value={bookFormData.publisher}
-                        onChange={(e) => setBookFormData({...bookFormData, publisher: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Enter publisher name"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Publication Year</label>
-                      <input
-                        type="number"
-                        min="1900"
-                        max={new Date().getFullYear() + 1}
-                        value={bookFormData.published_year}
-                        onChange={(e) => setBookFormData({...bookFormData, published_year: parseInt(e.target.value)})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Pages</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={bookFormData.pages}
-                        onChange={(e) => setBookFormData({...bookFormData, pages: parseInt(e.target.value)})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Number of pages"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">ISBN</label>
-                      <input
-                        type="text"
-                        value={bookFormData.isbn}
-                        onChange={(e) => setBookFormData({...bookFormData, isbn: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="ISBN number"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Subject</label>
-                      <input
-                        type="text"
-                        value={bookFormData.subject}
-                        onChange={(e) => setBookFormData({...bookFormData, subject: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Book subject/category"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Language</label>
-                      <select
-                        value={bookFormData.language}
-                        onChange={(e) => setBookFormData({...bookFormData, language: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      >
-                        <option value="English">English</option>
-                        <option value="Indonesian">Indonesian</option>
-                        <option value="Mandarin">Mandarin</option>
-                        <option value="Arabic">Arabic</option>
-                        <option value="Spanish">Spanish</option>
-                        <option value="French">French</option>
-                        <option value="German">German</option>
-                        <option value="Other">Other</option>
-                      </select>
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">File Upload</label>
-                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
-                        <CloudArrowUpIcon className="mx-auto h-12 w-12 text-gray-400" />
-                        <div className="mt-4">
-                          <label htmlFor="book-file" className="cursor-pointer">
-                            <span className="mt-2 block text-sm font-medium text-gray-900">
-                              {bookFile ? bookFile.name : 'Click to upload book file'}
-                            </span>
-                            <span className="mt-1 block text-xs text-gray-500">
-                              PDF, DOC, DOCX up to 32MB
-                            </span>
-                          </label>
-                          <input
-                            id="book-file"
-                            type="file"
-                            className="hidden"
-                            accept=".pdf,.doc,.docx"
-                            onChange={(e) => setBookFile(e.target.files?.[0] || null)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Summary</label>
-                      <textarea
-                        rows={4}
-                        value={bookFormData.summary}
-                        onChange={(e) => setBookFormData({...bookFormData, summary: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Brief description of the book"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
-                    <button
-                      type="button"
-                      onClick={resetBookForm}
-                      className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 flex items-center"
-                    >
-                      {editingBook ? 'Update Book' : 'Add Book'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
 
             {/* Books List */}
             <div className="bg-white rounded-xl shadow-sm p-6">
@@ -816,33 +1304,66 @@ export default function AdminPage() {
                   <p className="text-gray-600 mt-1">Manage your book collection</p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="relative">
+                  {/* Remove the opening <div> here, as the <form> now wraps the search input */}
+                  <form onSubmit={handleBookSearch} className="relative">
                     <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                     <input
                       type="text"
                       placeholder="Search books..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={bookSearch}
+                      onChange={(e) => setBookSearch(e.target.value)}
+                      className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#38b36c] focus:border-transparent"
                     />
-                  </div>
+                  </form>
                   <button
-                    onClick={() => setShowBookForm(true)}
-                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
+                    onClick={() => {
+                      setEditingBook(null);
+                      resetBookForm();
+                      setShowBookForm(true);
+                    }}
+                    className="inline-flex items-center px-4 py-2 bg-[#38b36c] text-white text-sm font-medium rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-colors duration-200"
                   >
                     <PlusIcon className="h-4 w-4 mr-2" />
                     Add Book
                   </button>
+                  {selectedBooks.length > 0 && (
+                    <button
+                      onClick={() => setShowBulkDeleteConfirm({ type: 'book', count: selectedBooks.length })}
+                      className="inline-flex items-center px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200"
+                      disabled={isBulkDeleting}
+                    >
+                      <TrashIcon className="h-4 w-4 mr-2" />
+                      Delete Selected ({selectedBooks.length})
+                    </button>
+                  )}
                 </div>
               </div>
 
+              {/* Table header for checkboxes */}
+              {filteredBooks.length > 0 && (
+                <div className="flex items-center mb-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedBooks.length === filteredBooks.length}
+                    onChange={e => handleSelectAllBooks(e.target.checked)}
+                    className="mr-2 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
+                  />
+                  <span className="text-sm text-gray-700">Select All</span>
+                </div>
+              )}
+
               {isLoading ? (
-                <div className="space-y-4">
+                <div className="grid gap-4">
                   {[1, 2, 3].map((i) => (
-                    <div key={i} className="border border-gray-200 rounded-lg p-6 animate-pulse">
-                      <div className="h-4 bg-gray-200 rounded mb-2"></div>
-                      <div className="h-3 bg-gray-200 rounded mb-2 w-3/4"></div>
-                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                    <div key={i} className="bg-white p-6 rounded-lg shadow-sm animate-pulse">
+                      <div className="flex items-center space-x-4">
+                        <div className="h-16 w-16 bg-gray-200 rounded-lg"></div>
+                        <div className="flex-1">
+                          <div className="h-5 bg-gray-200 rounded w-3/4 mb-2"></div>
+                          <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+                          <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -851,13 +1372,17 @@ export default function AdminPage() {
                   <BookOpenIcon className="mx-auto h-12 w-12 text-gray-400" />
                   <h3 className="mt-2 text-sm font-medium text-gray-900">No books found</h3>
                   <p className="mt-1 text-sm text-gray-500">
-                    {searchTerm ? 'Try adjusting your search terms.' : 'Get started by adding your first book.'}
+                    {bookSearch ? 'Try adjusting your search terms.' : 'Get started by adding your first book.'}
                   </p>
-                  {!searchTerm && (
+                  {!bookSearch && (
                     <div className="mt-6">
                       <button
-                        onClick={() => setShowBookForm(true)}
-                        className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                        onClick={() => {
+                          setEditingBook(null);
+                          resetBookForm();
+                          setShowBookForm(true);
+                        }}
+                        className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-[#38b36c] hover:bg-[#2e8c55]"
                       >
                         <PlusIcon className="h-4 w-4 mr-2" />
                         Add Book
@@ -868,71 +1393,119 @@ export default function AdminPage() {
               ) : (
                 <div className="grid gap-4">
                   {filteredBooks.map((book) => (
-                    <div key={book.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-start space-x-4">
-                            <div className="flex-shrink-0 w-16 h-20 bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg flex items-center justify-center">
-                              <BookOpenIcon className="h-8 w-8 text-blue-600" />
-                            </div>
-                            <div className="flex-1">
-                              <h3 className="text-lg font-semibold text-gray-900 mb-1">{book.title}</h3>
-                              <p className="text-sm text-gray-600 mb-2">by {book.author}</p>
-                              <div className="flex flex-wrap gap-2 text-xs">
-                                {book.subject && (
-                                  <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
-                                    {book.subject}
-                                  </span>
-                                )}
-                                {book.published_year && (
-                                  <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full">
-                                    {book.published_year}
-                                  </span>
-                                )}
-                                {book.pages && (
-                                  <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full">
-                                    {book.pages} pages
-                                  </span>
-                                )}
-                                {book.language && (
-                                  <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
-                                    {book.language}
-                                  </span>
-                                )}
-                                {book.file_url && (
-                                  <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded-full">
-                                    File Available
-                                  </span>
+                    <div key={book.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 flex items-start">
+                      <input
+                        type="checkbox"
+                        checked={selectedBooks.includes(book.id)}
+                        onChange={e => handleSelectBook(book.id, e.target.checked)}
+                        className="mr-4 mt-2 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-start space-x-4">
+                              <div className="flex-shrink-0 w-16 h-20 bg-gradient-to-br from-[#e6f4ec] to-[#b2e5c7] rounded-lg flex items-center justify-center">
+                                <BookOpenIcon className="h-8 w-8 text-[#38b36c]" />
+                              </div>
+                              <div className="flex-1">
+                                <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                                  <Link
+                                    href={`/books/${book.id}`}
+                                    className="text-gray-900 hover:text-[#4cae8a] hover:underline transition-colors duration-200"
+                                  >
+                                    {book.title}
+                                  </Link>
+                                </h3>
+                                <div className="text-sm text-gray-600 mb-2">
+                                  by {book.authors && book.authors.length > 0 ? (
+                                    book.authors.map((author, index) => (
+                                      <React.Fragment key={author.id}>
+                                        <Link
+                                          href={`/authors/${encodeURIComponent(author.author_name)}`}
+                                          className="text-[#4cae8a] hover:text-[#357a5b] hover:underline"
+                                        >
+                                          {author.author_name}
+                                        </Link>
+                                        {index < book.authors!.length - 1 && <span>, </span>}
+                                      </React.Fragment>
+                                    ))
+                                  ) : (
+                                    <Link
+                                      href={`/authors/${encodeURIComponent(book.author)}`}
+                                      className="text-[#4cae8a] hover:text-[#357a5b] hover:underline"
+                                    >
+                                      {book.author}
+                                    </Link>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                  {book.subject && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      {book.subject}
+                                    </span>
+                                  )}
+                                  {book.published_year && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      {book.published_year}
+                                    </span>
+                                  )}
+                                  {book.pages && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      {book.pages} pages
+                                    </span>
+                                  )}
+                                  {book.language && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      {book.language}
+                                    </span>
+                                  )}
+                                  {book.file_url && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      File Available
+                                    </span>
+                                  )}
+                                </div>
+                                {book.summary && (
+                                  <p className="text-sm text-gray-500 mt-2 line-clamp-2">
+                                    {book.summary}
+                                  </p>
                                 )}
                               </div>
-                              {book.summary && (
-                                <p className="text-sm text-gray-500 mt-2 line-clamp-2">
-                                  {book.summary}
-                                </p>
-                              )}
                             </div>
                           </div>
-                        </div>
-                        <div className="flex flex-col sm:flex-row gap-2 ml-4">
-                          <button
-                            onClick={() => startEditBook(book)}
-                            className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors duration-200"
-                            title="Edit book"
-                          >
-                            <PencilIcon className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => setShowDeleteConfirm({ type: 'book', id: book.id, title: book.title })}
-                            className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors duration-200"
-                            title="Delete book"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
+                          <div className="flex flex-col sm:flex-row gap-2 ml-4">
+                            <button
+                              onClick={() => startEditBook(book)}
+                              className="p-2 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
+                              title="Edit book"
+                            >
+                              <PencilIcon className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => setShowDeleteConfirm({ type: 'book', id: book.id, title: book.title })}
+                              className="p-2 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
+                              title="Delete book"
+                            >
+                              <TrashIcon className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
+              )}
+
+              {/* Bulk Delete Confirm Dialog */}
+              {showBulkDeleteConfirm && showBulkDeleteConfirm.type === 'book' && (
+                <ConfirmDialog
+                  isOpen={true}
+                  title="Delete Selected Books"
+                  message={`Are you sure you want to delete ${showBulkDeleteConfirm.count} selected book(s)? This action cannot be undone.`}
+                  isLoading={isBulkDeleting}
+                  onClose={() => setShowBulkDeleteConfirm(null)}
+                  onConfirm={handleBulkDeleteBooks}
+                />
               )}
             </div>
           </div>
@@ -942,165 +1515,6 @@ export default function AdminPage() {
         {activeTab === 'papers' && (
           <div className="space-y-6">
             {/* Add/Edit Paper Form */}
-            {showPaperForm && (
-              <div className="bg-white rounded-xl shadow-sm p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-xl font-semibold text-gray-900">
-                      {editingPaper ? 'Edit Paper' : 'Add New Paper'}
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {editingPaper ? 'Update paper information' : 'Fill in the details to add a new research paper'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={resetPaperForm}
-                    className="text-gray-400 hover:text-gray-600 p-2 hover:bg-gray-100 rounded-lg"
-                  >
-                    <XMarkIcon className="h-6 w-6" />
-                  </button>
-                </div>
-                
-                <form onSubmit={editingPaper ? handleUpdatePaper : handleCreatePaper} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Title <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={paperFormData.title}
-                        onChange={(e) => setPaperFormData({...paperFormData, title: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        placeholder="Enter paper title"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Author <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={paperFormData.author}
-                        onChange={(e) => setPaperFormData({...paperFormData, author: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        placeholder="Enter author name"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Advisor</label>
-                      <input
-                        type="text"
-                        value={paperFormData.advisor}
-                        onChange={(e) => setPaperFormData({...paperFormData, advisor: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        placeholder="Enter advisor name"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">University</label>
-                      <input
-                        type="text"
-                        value={paperFormData.university}
-                        onChange={(e) => setPaperFormData({...paperFormData, university: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        placeholder="University name"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
-                      <input
-                        type="text"
-                        value={paperFormData.department}
-                        onChange={(e) => setPaperFormData({...paperFormData, department: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        placeholder="Department/Faculty"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Year</label>
-                      <input
-                        type="number"
-                        min="1900"
-                        max={new Date().getFullYear() + 1}
-                        value={paperFormData.year}
-                        onChange={(e) => setPaperFormData({...paperFormData, year: parseInt(e.target.value)})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                      />
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">File Upload</label>
-                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-green-400 transition-colors">
-                        <CloudArrowUpIcon className="mx-auto h-12 w-12 text-gray-400" />
-                        <div className="mt-4">
-                          <label htmlFor="paper-file" className="cursor-pointer">
-                            <span className="mt-2 block text-sm font-medium text-gray-900">
-                              {paperFile ? paperFile.name : 'Click to upload paper file'}
-                            </span>
-                            <span className="mt-1 block text-xs text-gray-500">
-                              PDF, DOC, DOCX up to 32MB
-                            </span>
-                          </label>
-                          <input
-                            id="paper-file"
-                            type="file"
-                            className="hidden"
-                            accept=".pdf,.doc,.docx"
-                            onChange={(e) => setPaperFile(e.target.files?.[0] || null)}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Abstract</label>
-                      <textarea
-                        rows={4}
-                        value={paperFormData.abstract}
-                        onChange={(e) => setPaperFormData({...paperFormData, abstract: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        placeholder="Brief abstract of the research"
-                      />
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Keywords</label>
-                      <input
-                        type="text"
-                        placeholder="Separate keywords with commas (e.g., machine learning, AI, research)"
-                        value={paperFormData.keywords}
-                        onChange={(e) => setPaperFormData({...paperFormData, keywords: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
-                    <button
-                      type="button"
-                      onClick={resetPaperForm}
-                      className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 flex items-center"
-                    >
-                      {editingPaper ? 'Update Paper' : 'Add Paper'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
 
             {/* Papers List */}
             <div className="bg-white rounded-xl shadow-sm p-6">
@@ -1110,33 +1524,66 @@ export default function AdminPage() {
                   <p className="text-gray-600 mt-1">Manage your research papers collection</p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="relative">
+                  {/* Remove the opening <div> here, as the <form> now wraps the search input */}
+                  <form onSubmit={handlePaperSearch} className="relative">
                     <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                     <input
                       type="text"
                       placeholder="Search papers..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      value={paperSearch}
+                      onChange={(e) => setPaperSearch(e.target.value)}
+                      className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#38b36c] focus:border-transparent"
                     />
-                  </div>
+                  </form>
                   <button
-                    onClick={() => setShowPaperForm(true)}
-                    className="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
+                    onClick={() => {
+                      setEditingPaper(null);
+                      resetPaperForm();
+                      setShowPaperForm(true);
+                    }}
+                    className="inline-flex items-center px-4 py-2 bg-[#38b36c] text-white text-sm font-medium rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-colors duration-200"
                   >
                     <PlusIcon className="h-4 w-4 mr-2" />
                     Add Paper
                   </button>
+                  {selectedPapers.length > 0 && (
+                    <button
+                      onClick={() => setShowBulkDeleteConfirm({ type: 'paper', count: selectedPapers.length })}
+                      className="inline-flex items-center px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200"
+                      disabled={isBulkDeleting}
+                    >
+                      <TrashIcon className="h-4 w-4 mr-2" />
+                      Delete Selected ({selectedPapers.length})
+                    </button>
+                  )}
                 </div>
               </div>
 
+              {/* Table header for checkboxes */}
+              {filteredPapers.length > 0 && (
+                <div className="flex items-center mb-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedPapers.length === filteredPapers.length}
+                    onChange={e => handleSelectAllPapers(e.target.checked)}
+                    className="mr-2 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
+                  />
+                  <span className="text-sm text-gray-700">Select All</span>
+                </div>
+              )}
+
               {isLoading ? (
-                <div className="space-y-4">
+                <div className="grid gap-4">
                   {[1, 2, 3].map((i) => (
-                    <div key={i} className="border border-gray-200 rounded-lg p-6 animate-pulse">
-                      <div className="h-4 bg-gray-200 rounded mb-2"></div>
-                      <div className="h-3 bg-gray-200 rounded mb-2 w-3/4"></div>
-                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                    <div key={i} className="bg-white p-6 rounded-lg shadow-sm animate-pulse">
+                      <div className="flex items-center space-x-4">
+                        <div className="h-16 w-16 bg-gray-200 rounded-lg"></div>
+                        <div className="flex-1">
+                          <div className="h-5 bg-gray-200 rounded w-3/4 mb-2"></div>
+                          <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+                          <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1145,13 +1592,17 @@ export default function AdminPage() {
                   <DocumentTextIcon className="mx-auto h-12 w-12 text-gray-400" />
                   <h3 className="mt-2 text-sm font-medium text-gray-900">No papers found</h3>
                   <p className="mt-1 text-sm text-gray-500">
-                    {searchTerm ? 'Try adjusting your search terms.' : 'Get started by adding your first research paper.'}
+                    {paperSearch ? 'Try adjusting your search terms.' : 'Get started by adding your first research paper.'}
                   </p>
-                  {!searchTerm && (
+                  {!paperSearch && (
                     <div className="mt-6">
                       <button
-                        onClick={() => setShowPaperForm(true)}
-                        className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
+                        onClick={() => {
+                          setEditingPaper(null);
+                          resetPaperForm();
+                          setShowPaperForm(true);
+                        }}
+                        className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-[#38b36c] hover:bg-[#2e8c55]"
                       >
                         <PlusIcon className="h-4 w-4 mr-2" />
                         Add Paper
@@ -1162,77 +1613,125 @@ export default function AdminPage() {
               ) : (
                 <div className="grid gap-4">
                   {filteredPapers.map((paper) => (
-                    <div key={paper.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-start space-x-4">
-                            <div className="flex-shrink-0 w-16 h-20 bg-gradient-to-br from-green-100 to-green-200 rounded-lg flex items-center justify-center">
-                              <DocumentTextIcon className="h-8 w-8 text-green-600" />
-                            </div>
-                            <div className="flex-1">
-                              <h3 className="text-lg font-semibold text-gray-900 mb-1">{paper.title}</h3>
-                              <p className="text-sm text-gray-600 mb-2">by {paper.author}</p>
-                              <div className="flex flex-wrap gap-2 text-xs">
-                                {paper.university && (
-                                  <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full">
-                                    {paper.university}
-                                  </span>
+                    <div key={paper.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 flex items-start">
+                      <input
+                        type="checkbox"
+                        checked={selectedPapers.includes(paper.id)}
+                        onChange={e => handleSelectPaper(paper.id, e.target.checked)}
+                        className="mr-4 mt-2 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-start space-x-4">
+                              <div className="flex-shrink-0 w-16 h-20 bg-gradient-to-br from-[#e6f4ec] to-[#b2e5c7] rounded-lg flex items-center justify-center">
+                                <DocumentTextIcon className="h-8 w-8 text-[#38b36c]" />
+                              </div>
+                              <div className="flex-1">
+                                <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                                  <Link
+                                    href={`/papers/${paper.id}`}
+                                    className="text-gray-900 hover:text-[#4cae8a] hover:underline transition-colors duration-200"
+                                  >
+                                    {paper.title}
+                                  </Link>
+                                </h3>
+                                <div className="text-sm text-gray-600 mb-2">
+                                  by {paper.authors && paper.authors.length > 0 ? (
+                                    paper.authors.map((author, index) => (
+                                      <React.Fragment key={author.id}>
+                                        <Link
+                                          href={`/authors/${encodeURIComponent(author.author_name)}`}
+                                          className="text-[#4cae8a] hover:text-[#357a5b] hover:underline"
+                                        >
+                                          {author.author_name}
+                                        </Link>
+                                        {index < paper.authors!.length - 1 && <span>, </span>}
+                                      </React.Fragment>
+                                    ))
+                                  ) : (
+                                    <Link
+                                      href={`/authors/${encodeURIComponent(paper.author)}`}
+                                      className="text-[#4cae8a] hover:text-[#357a5b] hover:underline"
+                                    >
+                                      {paper.author}
+                                    </Link>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                  {paper.university && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      {paper.university}
+                                    </span>
+                                  )}
+                                  {paper.department && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      {paper.department}
+                                    </span>
+                                  )}
+                                  {paper.year && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      {paper.year}
+                                    </span>
+                                  )}
+                                  {paper.advisor && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      Advisor: {paper.advisor}
+                                    </span>
+                                  )}
+                                  {paper.file_url && (
+                                    <span className="px-2 py-1 bg-[#e6f4ec] text-[#2e8c55] rounded-full">
+                                      File Available
+                                    </span>
+                                  )}
+                                </div>
+                                {paper.abstract && (
+                                  <p className="text-sm text-gray-500 mt-2 line-clamp-2">
+                                    {paper.abstract}
+                                  </p>
                                 )}
-                                {paper.department && (
-                                  <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
-                                    {paper.department}
-                                  </span>
-                                )}
-                                {paper.year && (
-                                  <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full">
-                                    {paper.year}
-                                  </span>
-                                )}
-                                {paper.advisor && (
-                                  <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
-                                    Advisor: {paper.advisor}
-                                  </span>
-                                )}
-                                {paper.file_url && (
-                                  <span className="px-2 py-1 bg-orange-100 text-orange-700 rounded-full">
-                                    File Available
-                                  </span>
+                                {paper.keywords && (
+                                  <div className="mt-2">
+                                    <span className="text-xs text-gray-400">Keywords: </span>
+                                    <span className="text-xs text-gray-600">{paper.keywords}</span>
+                                  </div>
                                 )}
                               </div>
-                              {paper.abstract && (
-                                <p className="text-sm text-gray-500 mt-2 line-clamp-2">
-                                  {paper.abstract}
-                                </p>
-                              )}
-                              {paper.keywords && (
-                                <div className="mt-2">
-                                  <span className="text-xs text-gray-400">Keywords: </span>
-                                  <span className="text-xs text-gray-600">{paper.keywords}</span>
-                                </div>
-                              )}
                             </div>
                           </div>
-                        </div>
-                        <div className="flex flex-col sm:flex-row gap-2 ml-4">
-                          <button
-                            onClick={() => startEditPaper(paper)}
-                            className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg transition-colors duration-200"
-                            title="Edit paper"
-                          >
-                            <PencilIcon className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => setShowDeleteConfirm({ type: 'paper', id: paper.id, title: paper.title })}
-                            className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-colors duration-200"
-                            title="Delete paper"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
+                          <div className="flex flex-col sm:flex-row gap-2 ml-4">
+                            <button
+                              onClick={() => startEditPaper(paper)}
+                              className="p-2 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
+                              title="Edit paper"
+                            >
+                              <PencilIcon className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => setShowDeleteConfirm({ type: 'paper', id: paper.id, title: paper.title })}
+                              className="p-2 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
+                              title="Delete paper"
+                            >
+                              <TrashIcon className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
+              )}
+
+              {/* Bulk Delete Confirm Dialog */}
+              {showBulkDeleteConfirm && showBulkDeleteConfirm.type === 'paper' && (
+                <ConfirmDialog
+                  isOpen={true}
+                  title="Delete Selected Papers"
+                  message={`Are you sure you want to delete ${showBulkDeleteConfirm.count} selected paper(s)? This action cannot be undone.`}
+                  isLoading={isBulkDeleting}
+                  onClose={() => setShowBulkDeleteConfirm(null)}
+                  onConfirm={handleBulkDeletePapers}
+                />
               )}
             </div>
           </div>
@@ -1247,25 +1746,63 @@ export default function AdminPage() {
                   <h2 className="text-2xl font-bold text-gray-900">Users Management</h2>
                   <p className="text-gray-600 mt-1">Manage system users and their roles</p>
                 </div>
-                <div className="relative">
-                  <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search users..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  />
+                <div className="flex gap-2 items-center">
+                  <div className="relative">
+                    <form onSubmit={handleUserSearch} className="relative">
+                      <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search users..."
+                        value={userSearch}
+                        onChange={(e) => setUserSearch(e.target.value)}
+                        className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#38b36c] focus:border-transparent"
+                      />
+                    </form>
+                    <button
+                      onClick={() => setShowAddUserModal(true)}
+                      className="inline-flex items-center px-4 py-2 bg-[#38b36c] text-white text-sm font-medium rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-colors duration-200"
+                    >
+                      Add User
+                    </button>
+                    {selectedUsers.length > 0 && (
+                      <button
+                        onClick={() => setShowBulkDeleteConfirm({ type: 'user', count: selectedUsers.length })}
+                        className="inline-flex items-center px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200"
+                        disabled={isBulkDeleting}
+                      >
+                        <TrashIcon className="h-4 w-4 mr-2" />
+                        Delete Selected ({selectedUsers.length})
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
+
+              {/* Table header for checkboxes */}
+              {filteredUsers.length > 0 && (
+                <div className="flex items-center mb-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedUsers.length === filteredUsers.length}
+                    onChange={e => handleSelectAllUsers(e.target.checked)}
+                    className="mr-2 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
+                  />
+                  <span className="text-sm text-gray-700">Select All</span>
+                </div>
+              )}
 
               {isLoading ? (
                 <div className="space-y-4">
                   {[1, 2, 3].map((i) => (
-                    <div key={i} className="border border-gray-200 rounded-lg p-6 animate-pulse">
-                      <div className="h-4 bg-gray-200 rounded mb-2"></div>
-                      <div className="h-3 bg-gray-200 rounded mb-2 w-3/4"></div>
-                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                    <div key={i} className="bg-white p-6 rounded-lg shadow-sm animate-pulse">
+                      <div className="flex items-center space-x-4">
+                        <div className="h-12 w-12 bg-gray-200 rounded-full"></div>
+                        <div className="flex-1">
+                          <div className="h-5 bg-gray-200 rounded w-1/3 mb-2"></div>
+                          <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
+                          <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1274,44 +1811,81 @@ export default function AdminPage() {
                   <UserGroupIcon className="mx-auto h-12 w-12 text-gray-400" />
                   <h3 className="mt-2 text-sm font-medium text-gray-900">No users found</h3>
                   <p className="mt-1 text-sm text-gray-500">
-                    {searchTerm ? 'Try adjusting your search terms.' : 'No users match the current criteria.'}
+                    {userSearch ? 'Try adjusting your search terms.' : 'No users match the current criteria.'}
                   </p>
                 </div>
               ) : (
                 <div className="grid gap-4">
                   {filteredUsers.map((user) => (
-                    <div key={user.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200">
-                      <div className="flex items-center space-x-4">
-                        <div className="flex-shrink-0">
-                          <div className="h-12 w-12 bg-gradient-to-br from-purple-100 to-purple-200 rounded-full flex items-center justify-center">
-                            <span className="text-lg font-semibold text-purple-600">
-                              {user.name.charAt(0).toUpperCase()}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h3 className="text-lg font-semibold text-gray-900">{user.name}</h3>
-                              <p className="text-sm text-gray-600">{user.email}</p>
-                              {user.nim && (
-                                <p className="text-xs text-gray-500 mt-1">NIM: {user.nim}</p>
-                              )}
-                              {user.jurusan && (
-                                <p className="text-xs text-gray-500">Department: {user.jurusan}</p>
-                              )}
+                    <div key={user.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedUsers.includes(user.id)}
+                        onChange={e => handleSelectUser(user.id, e.target.checked)}
+                        className="mr-4 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-4">
+                          <div className="flex-shrink-0">
+                            <div className="h-12 w-12 bg-gradient-to-br from-[#e6f4ec] to-[#b2e5c7] rounded-full flex items-center justify-center">
+                              <span className="text-lg font-semibold text-[#38b36c]">
+                                {user.name.charAt(0).toUpperCase()}
+                              </span>
                             </div>
-                            <div className="flex flex-col items-end space-y-2">
-                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                                user.role === 'admin' 
-                                  ? 'bg-red-100 text-red-700' 
-                                  : 'bg-blue-100 text-blue-700'
-                              }`}>
-                                {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-                              </span>
-                              <span className="text-xs text-gray-500">
-                                Joined: {new Date(user.created_at).toLocaleDateString()}
-                              </span>
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <h3 className="text-lg font-semibold text-gray-900">{user.name}</h3>
+                                <p className="text-sm text-gray-600">{user.email}</p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  {user.user_type === 'student' ? 'NIM' : 'NIDN'}: {user.nim_nidn}
+                                </p>
+                                <p className="text-xs text-gray-500">Faculty: {user.faculty}</p>
+                              </div>
+                              <div className="flex flex-col items-end space-y-2">
+                                <div className="flex items-center space-x-2">
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${user.role === 'admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+                                    {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                                  </span>
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full ${user.user_type === 'lecturer' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                    {user.user_type.charAt(0).toUpperCase() + user.user_type.slice(1)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  {!user.is_approved && (
+                                    <button
+                                      onClick={() => approveUser(user.id)}
+                                      className="text-xs text-green-600 hover:text-green-800"
+                                    >
+                                      Approve
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => updateUserRole(user.id, user.role === 'admin' ? 'user' : 'admin')}
+                                    className="text-xs text-blue-600 hover:text-blue-800"
+                                  >
+                                    {user.role === 'admin' ? 'Demote' : 'Promote'}
+                                  </button>
+                                  <button
+                                    onClick={() => startEditUser(user)}
+                                    className="p-1 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
+                                    title="Edit user"
+                                  >
+                                    <PencilIcon className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => setShowDeleteUserConfirm({ id: user.id, name: user.name })}
+                                    className="p-1 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
+                                    title="Delete user"
+                                  >
+                                    <TrashIcon className="h-4 w-4" />
+                                  </button>
+                                </div>
+                                <span className="text-xs text-gray-500">
+                                  Joined: {new Date(user.created_at).toLocaleDateString()}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1320,7 +1894,192 @@ export default function AdminPage() {
                   ))}
                 </div>
               )}
+
+              {/* Bulk Delete Confirm Dialog */}
+              {showBulkDeleteConfirm && showBulkDeleteConfirm.type === 'user' && (
+                <ConfirmDialog
+                  isOpen={true}
+                  title="Delete Selected Users"
+                  message={`Are you sure you want to delete ${showBulkDeleteConfirm.count} selected user(s)? This action cannot be undone.`}
+                  isLoading={isBulkDeleting}
+                  onClose={() => setShowBulkDeleteConfirm(null)}
+                  onConfirm={handleBulkDeleteUsers}
+                />
+              )}
             </div>
+            {/* Edit User Modal */}
+            {showUserForm && (
+              <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+                <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full">
+                  <div className="p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-medium text-gray-900">Edit User</h3>
+                      <button
+                        onClick={() => { setShowUserForm(false); setEditingUser(null); }}
+                        className="text-gray-400 hover:text-gray-600 p-2 hover:bg-gray-100 rounded-lg"
+                      >
+                        <XMarkIcon className="h-6 w-6" />
+                      </button>
+                    </div>
+                    <form onSubmit={handleUserSubmit} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Name</label>
+                        <input
+                          type="text"
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          value={userFormData.name || ''}
+                          onChange={e => setUserFormData({ ...userFormData, name: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Email</label>
+                        <input
+                          type="email"
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          value={userFormData.email || ''}
+                          onChange={e => setUserFormData({ ...userFormData, email: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Role</label>
+                        <select
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          value={userFormData.role || 'user'}
+                          onChange={e => setUserFormData({ ...userFormData, role: e.target.value as 'admin' | 'user' })}
+                          required
+                        >
+                          <option value="user">User</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Occupation</label>
+                        <select
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          value={userFormData.user_type || 'student'}
+                          onChange={e => setUserFormData({ ...userFormData, user_type: e.target.value as 'student' | 'lecturer' })}
+                          required
+                        >
+                          <option value="student">Student</option>
+                          <option value="lecturer">Lecturer</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Faculty</label>
+                        <input
+                          type="text"
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          value={userFormData.faculty || ''}
+                          onChange={e => setUserFormData({ ...userFormData, faculty: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Department</label>
+                        <select
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          value={userFormData.department_id || ''}
+                          onChange={e => setUserFormData({ ...userFormData, department_id: Number(e.target.value) })}
+                          required
+                          disabled={isLoadingDepartments || departments.length === 0}
+                        >
+                          {isLoadingDepartments ? (
+                            <option>Loading...</option>
+                          ) : departments.length === 0 ? (
+                            <option value="">No departments found</option>
+                          ) : (
+                            departments.map(dep => (
+                              <option key={dep.id} value={dep.id}>{dep.name}</option>
+                            ))
+                          )}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">NIM/NIDN</label>
+                        <input
+                          type="text"
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          value={userFormData.nim_nidn || ''}
+                          onChange={e => setUserFormData({ ...userFormData, nim_nidn: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {userFormData.user_type === 'student'
+                          ? 'NIM must be at least 7 digits.'
+                          : 'NIDN must be at least 10 digits.'}
+                      </p>
+                      <div className="flex items-center">
+                        <input
+                          id="is_approved"
+                          type="checkbox"
+                          checked={!!userFormData.is_approved}
+                          onChange={e => setUserFormData({ ...userFormData, is_approved: e.target.checked })}
+                          className="h-4 w-4 text-[#38b36c] border-gray-300 rounded focus:ring-[#38b36c]"
+                        />
+                        <label htmlFor="is_approved" className="ml-2 block text-sm text-gray-700">
+                          Approved
+                        </label>
+                      </div>
+                      <div className="flex justify-end space-x-3 pt-4">
+                        <button
+                          type="button"
+                          onClick={() => { setShowUserForm(false); setEditingUser(null); }}
+                          className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-6 py-2 bg-[#38b36c] text-white rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] flex items-center"
+                          disabled={isUserSubmitting}
+                        >
+                          {isUserSubmitting ? 'Saving...' : 'Save Changes'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Delete User Confirmation Modal */}
+            {showDeleteUserConfirm && (
+              <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+                <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full">
+                  <div className="p-6">
+                    <div className="flex items-center justify-center mb-4">
+                      <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                        <ExclamationTriangleIcon className="h-6 w-6 text-red-600" />
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">
+                        Delete User
+                      </h3>
+                      <p className="text-sm text-gray-500 mb-6">
+                        Are you sure you want to delete user &quot;{showDeleteUserConfirm.name}&quot;? This action cannot be undone.
+                      </p>
+                      <div className="flex justify-center space-x-3">
+                        <button
+                          onClick={() => setShowDeleteUserConfirm(null)}
+                          className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(showDeleteUserConfirm.id)}
+                          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1363,6 +2122,210 @@ export default function AdminPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add User Modal - move this here, inside the main div */}
+        {showAddUserModal && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
+            <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium text-gray-900">Add New User</h3>
+                  <button
+                    onClick={() => setShowAddUserModal(false)}
+                    className="text-gray-400 hover:text-gray-600 p-2 hover:bg-gray-100 rounded-lg"
+                  >
+                    <XMarkIcon className="h-6 w-6" />
+                  </button>
+                </div>
+                <form onSubmit={handleAddUserSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="name"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.name}
+                      onChange={handleAddUserChange}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Email <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      name="email"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.email}
+                      onChange={handleAddUserChange}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Password <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      name="password"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.password}
+                      onChange={handleAddUserChange}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Role <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      name="role"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.role}
+                      onChange={handleAddUserChange}
+                      required
+                    >
+                      <option value="user">User</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Occupation <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      name="user_type"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.user_type}
+                      onChange={handleAddUserChange}
+                      required
+                    >
+                      <option value="student">Student</option>
+                      <option value="lecturer">Lecturer</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      NIM/NIDN <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="nim_nidn"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.nim_nidn}
+                      onChange={handleAddUserChange}
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {addUserForm.user_type === 'student'
+                        ? 'NIM must be at least 7 digits.'
+                        : 'NIDN must be at least 10 digits.'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Faculty <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      name="faculty"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.faculty}
+                      onChange={handleAddUserChange}
+                      required
+                    >
+                      <option value="Fakultas Ekonomi">Fakultas Ekonomi</option>
+                      <option value="Fakultas Ilmu Komputer">Fakultas Ilmu Komputer</option>
+                      <option value="Fakultas Hukum">Fakultas Hukum</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Department <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      name="department_id"
+                      className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                      value={addUserForm.department_id}
+                      onChange={handleAddUserChange}
+                      required
+                      disabled={isLoadingDepartments || departments.length === 0}
+                    >
+                      {isLoadingDepartments ? (
+                        <option>Loading...</option>
+                      ) : departments.length === 0 ? (
+                        <option value="">No departments found</option>
+                      ) : (
+                        departments.map(dep => (
+                          <option key={dep.id} value={dep.id}>{dep.name}</option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                  <div className="flex justify-end space-x-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddUserModal(false)}
+                      className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-6 py-2 bg-[#38b36c] text-white rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] flex items-center"
+                      disabled={isAddUserSubmitting}
+                    >
+                      {isAddUserSubmitting ? 'Adding...' : 'Add User'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Book Form Modal */}
+        {showBookForm && (
+          <BookForm
+            editingBook={editingBook}
+            onClose={() => {
+              setShowBookForm(false);
+              setEditingBook(null);
+            }}
+            onSuccess={handleBookSuccess}
+            isAdmin={true}
+          />
+        )}
+
+        {/* Paper Form Modal */}
+        {showPaperForm && (
+          <PaperForm
+            editingPaper={editingPaper}
+            onClose={() => {
+              setShowPaperForm(false);
+              setEditingPaper(null);
+            }}
+            onSuccess={handlePaperSuccess}
+            isAdmin={true}
+          />
+        )}
+
+        {/* Lecturer Approval Tab */}
+        {activeTab === 'lecturer-approval' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">Lecturer Approval</h2>
+                  <p className="text-gray-600 mt-1">Review and approve pending lecturer registrations</p>
+                </div>
+              </div>
+              <LecturerApproval />
             </div>
           </div>
         )}

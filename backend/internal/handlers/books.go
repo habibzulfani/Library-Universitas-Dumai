@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,7 +12,6 @@ import (
 	"time"
 
 	"e-repository-api/configs"
-	"e-repository-api/internal/database"
 	"e-repository-api/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -18,17 +19,21 @@ import (
 )
 
 type BookHandler struct {
+	db     *gorm.DB
 	config *configs.Config
 }
 
-func NewBookHandler(config *configs.Config) *BookHandler {
-	return &BookHandler{config: config}
+func NewBookHandler(db *gorm.DB, config *configs.Config) *BookHandler {
+	return &BookHandler{
+		db:     db,
+		config: config,
+	}
 }
 
 // CreateBook handles book creation with file upload
 func (h *BookHandler) CreateBook(c *gin.Context) {
 	var book models.Book
-	
+
 	// Parse multipart form
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB max
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
@@ -37,8 +42,25 @@ func (h *BookHandler) CreateBook(c *gin.Context) {
 
 	// Extract form fields
 	book.Title = c.PostForm("title")
-	book.Author = c.PostForm("author")
-	
+
+	// Get authors from form data
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		}
+	}
+
+	// Validate required fields
+	if book.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
+		return
+	}
+
+	// Set the first author as the main author in the books table
+	book.Author = authors[0]
+
 	// Handle optional string fields (convert to pointers)
 	if publisher := c.PostForm("publisher"); publisher != "" {
 		book.Publisher = &publisher
@@ -75,12 +97,6 @@ func (h *BookHandler) CreateBook(c *gin.Context) {
 		}
 	}
 
-	// Validate required fields
-	if book.Title == "" || book.Author == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and author are required"})
-		return
-	}
-
 	// Handle file upload
 	file, header, err := c.Request.FormFile("file")
 	if err == nil {
@@ -104,17 +120,79 @@ func (h *BookHandler) CreateBook(c *gin.Context) {
 			return
 		}
 
-		book.FileURL = &filePath
+		// Save file paths relative to uploads directory
+		fileURL := fmt.Sprintf("/uploads/books/%s", filepath.Base(filePath))
+		book.FileURL = &fileURL
 	}
 
-	// Save to database
-	if err := database.GetDB().Create(&book).Error; err != nil {
+	// Handle cover image upload
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
+
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+			return
+		}
+
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(book.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
+
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
+		book.CoverImageURL = &coverImageURL
+	}
+
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Save book to database
+	if err := tx.Create(&book).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create book"})
 		return
 	}
 
+	// Create book authors
+	for _, authorName := range authors {
+		bookAuthor := models.BookAuthor{
+			BookID:     book.ID,
+			AuthorName: authorName,
+			UserID:     book.CreatedBy,
+		}
+		if err := tx.Create(&bookAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create book authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
 	// Update book count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count + 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count + 1"))
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&book, book.ID)
 
 	c.JSON(http.StatusCreated, book)
 }
@@ -122,7 +200,7 @@ func (h *BookHandler) CreateBook(c *gin.Context) {
 // CreateUserBook handles user book creation with file upload
 func (h *BookHandler) CreateUserBook(c *gin.Context) {
 	var book models.Book
-	
+
 	// Parse multipart form
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB max
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
@@ -131,8 +209,25 @@ func (h *BookHandler) CreateUserBook(c *gin.Context) {
 
 	// Extract form fields
 	book.Title = c.PostForm("title")
-	book.Author = c.PostForm("author")
-	
+
+	// Get authors from form data
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		}
+	}
+
+	// Validate required fields
+	if book.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
+		return
+	}
+
+	// Set the first author as the main author in the books table
+	book.Author = authors[0]
+
 	// Handle optional string fields (convert to pointers)
 	if publisher := c.PostForm("publisher"); publisher != "" {
 		book.Publisher = &publisher
@@ -172,12 +267,6 @@ func (h *BookHandler) CreateUserBook(c *gin.Context) {
 		book.CreatedBy = &uid
 	}
 
-	// Validate required fields
-	if book.Title == "" || book.Author == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and author are required"})
-		return
-	}
-
 	// Handle file upload
 	file, header, err := c.Request.FormFile("file")
 	if err == nil {
@@ -201,17 +290,79 @@ func (h *BookHandler) CreateUserBook(c *gin.Context) {
 			return
 		}
 
-		book.FileURL = &filePath
+		// Save file paths relative to uploads directory
+		fileURL := fmt.Sprintf("/uploads/books/%s", filepath.Base(filePath))
+		book.FileURL = &fileURL
 	}
 
-	// Save to database
-	if err := database.GetDB().Create(&book).Error; err != nil {
+	// Handle cover image upload
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
+
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+			return
+		}
+
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(book.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
+
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
+		book.CoverImageURL = &coverImageURL
+	}
+
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Save book to database
+	if err := tx.Create(&book).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create book"})
 		return
 	}
 
+	// Create book authors
+	for _, authorName := range authors {
+		bookAuthor := models.BookAuthor{
+			BookID:     book.ID,
+			AuthorName: authorName,
+			UserID:     book.CreatedBy,
+		}
+		if err := tx.Create(&bookAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create book authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
 	// Update book count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count + 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count + 1"))
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&book, book.ID)
 
 	c.JSON(http.StatusCreated, book)
 }
@@ -235,13 +386,13 @@ func (h *BookHandler) GetBooks(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Book{}).Unscoped()
-	
+	query := h.db.Model(&models.Book{}).Unscoped()
+
 	// Search functionality
 	if req.Query != "" {
 		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ?", 
-			searchTerm, searchTerm, searchTerm)
+		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ? OR LOWER(isbn) LIKE ? OR CAST(published_year AS CHAR) LIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Category filter
@@ -256,47 +407,62 @@ func (h *BookHandler) GetBooks(c *gin.Context) {
 		query = query.Where("published_year = ?", *req.Year)
 	}
 
-	// Count total using raw SQL to avoid soft delete issues
+	// Get total count
 	var total int64
-	countSQL := "SELECT COUNT(*) FROM books WHERE 1=1"
-	var countArgs []interface{}
-	
-	// Apply the same filters to count query
-	if req.Query != "" {
-		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ?)"
-		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm)
-	}
-	if req.Category != "" {
-		countSQL += " AND id IN (SELECT book_id FROM book_categories bc JOIN categories c ON bc.category_id = c.id WHERE c.name = ?)"
-		countArgs = append(countArgs, req.Category)
-	}
-	if req.Year != nil {
-		countSQL += " AND published_year = ?"
-		countArgs = append(countArgs, *req.Year)
-	}
-	
-	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
-
-	// Get books with pagination
-	var books []models.Book
-	offset := (req.Page - 1) * req.Limit
-	if err := query.Offset(offset).Limit(req.Limit).Find(&books).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch books"})
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get total count"})
 		return
 	}
 
-	totalPages := int((total + int64(req.Limit) - 1) / int64(req.Limit))
+	// Get paginated results
+	var books []models.Book
+	offset := (req.Page - 1) * req.Limit
 
-	response := models.PaginatedResponse{
-		Data:       books,
-		Total:      total,
-		Page:       req.Page,
-		Limit:      req.Limit,
-		TotalPages: totalPages,
+	// Handle sorting
+	if req.Sort != "" {
+		sortParts := strings.Split(req.Sort, ":")
+		if len(sortParts) == 2 {
+			field := sortParts[0]
+			direction := strings.ToUpper(sortParts[1])
+			if direction == "DESC" || direction == "ASC" {
+				query = query.Order(fmt.Sprintf("%s %s", field, direction))
+			}
+		}
+	} else {
+		// Default sorting by created_at desc
+		query = query.Order("created_at DESC")
 	}
 
-	c.JSON(http.StatusOK, response)
+	if err := query.Offset(offset).Limit(req.Limit).Find(&books).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get books"})
+		return
+	}
+
+	// Convert file URLs to full URLs if they exist
+	for i := range books {
+		if books[i].FileURL != nil {
+			fileURL := *books[i].FileURL
+			if !strings.HasPrefix(fileURL, "http") {
+				fileURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, fileURL)
+				books[i].FileURL = &fileURL
+			}
+		}
+		if books[i].CoverImageURL != nil {
+			coverURL := *books[i].CoverImageURL
+			if !strings.HasPrefix(coverURL, "http") {
+				coverURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, coverURL)
+				books[i].CoverImageURL = &coverURL
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":       total,
+		"page":        req.Page,
+		"limit":       req.Limit,
+		"total_pages": int(math.Ceil(float64(total) / float64(req.Limit))),
+		"data":        books,
+	})
 }
 
 // GetUserBooks handles getting books created by the authenticated user
@@ -330,12 +496,12 @@ func (h *BookHandler) GetUserBooks(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Book{}).Unscoped().Where("created_by = ?", uid)
-	
+	query := h.db.Model(&models.Book{}).Unscoped().Where("created_by = ?", uid)
+
 	// Search functionality
 	if req.Query != "" {
 		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ?", 
+		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ?",
 			searchTerm, searchTerm, searchTerm)
 	}
 
@@ -351,97 +517,126 @@ func (h *BookHandler) GetUserBooks(c *gin.Context) {
 		query = query.Where("published_year = ?", *req.Year)
 	}
 
-	// Count total using raw SQL to avoid soft delete issues
+	// Get total count
 	var total int64
-	countSQL := "SELECT COUNT(*) FROM books WHERE 1=1"
-	var countArgs []interface{}
-	
-	// Apply the same filters to count query
-	if req.Query != "" {
-		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(summary) LIKE ?)"
-		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm)
-	}
-	if req.Category != "" {
-		countSQL += " AND id IN (SELECT book_id FROM book_categories bc JOIN categories c ON bc.category_id = c.id WHERE c.name = ?)"
-		countArgs = append(countArgs, req.Category)
-	}
-	if req.Year != nil {
-		countSQL += " AND published_year = ?"
-		countArgs = append(countArgs, *req.Year)
-	}
-	
-	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
-
-	// Get books with pagination
-	var books []models.Book
-	offset := (req.Page - 1) * req.Limit
-	if err := query.Offset(offset).Limit(req.Limit).Find(&books).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch books"})
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get total count"})
 		return
 	}
 
-	totalPages := int((total + int64(req.Limit) - 1) / int64(req.Limit))
+	// Get paginated results
+	var books []models.Book
+	offset := (req.Page - 1) * req.Limit
+	if err := query.Offset(offset).Limit(req.Limit).Find(&books).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get books"})
+		return
+	}
 
-	response := models.PaginatedResponse{
-		Data:       books,
-		Total:      total,
-		Page:       req.Page,
-		Limit:      req.Limit,
-		TotalPages: totalPages,
+	// Convert file URLs to full URLs if they exist
+	for i := range books {
+		if books[i].FileURL != nil {
+			fileURL := *books[i].FileURL
+			if !strings.HasPrefix(fileURL, "http") {
+				fileURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, fileURL)
+				books[i].FileURL = &fileURL
+			}
+		}
+		if books[i].CoverImageURL != nil {
+			coverURL := *books[i].CoverImageURL
+			if !strings.HasPrefix(coverURL, "http") {
+				coverURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, coverURL)
+				books[i].CoverImageURL = &coverURL
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":       total,
+		"page":        req.Page,
+		"limit":       req.Limit,
+		"total_pages": int(math.Ceil(float64(total) / float64(req.Limit))),
+		"data":        books,
+	})
+}
+
+// GetBook handles getting a single book by ID
+func (h *BookHandler) GetBook(c *gin.Context) {
+	id := c.Param("id")
+	var book models.Book
+
+	// Load book with its authors
+	if err := h.db.Unscoped().Preload("Authors").First(&book, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
+		return
+	}
+
+	// Format the response to include authors array
+	response := gin.H{
+		"id":              book.ID,
+		"title":           book.Title,
+		"author":          book.Author,
+		"authors":         make([]gin.H, 0),
+		"publisher":       book.Publisher,
+		"published_year":  book.PublishedYear,
+		"isbn":            book.ISBN,
+		"subject":         book.Subject,
+		"language":        book.Language,
+		"pages":           book.Pages,
+		"summary":         book.Summary,
+		"file_url":        book.FileURL,
+		"cover_image_url": book.CoverImageURL,
+		"created_by":      book.CreatedBy,
+		"created_at":      book.CreatedAt,
+		"updated_at":      book.UpdatedAt,
+	}
+
+	// Add authors to the response
+	for _, author := range book.Authors {
+		response["authors"] = append(response["authors"].([]gin.H), gin.H{
+			"id":          author.ID,
+			"author_name": author.AuthorName,
+		})
+	}
+
+	// Convert file URLs to full URLs if they exist
+	if book.FileURL != nil {
+		fileURL := *book.FileURL
+		if !strings.HasPrefix(fileURL, "http") {
+			fileURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, fileURL)
+			response["file_url"] = fileURL
+		}
+	}
+
+	if book.CoverImageURL != nil {
+		coverURL := *book.CoverImageURL
+		if !strings.HasPrefix(coverURL, "http") {
+			coverURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, coverURL)
+			response["cover_image_url"] = coverURL
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
 }
 
-// GetBook handles getting a single book by ID
-func (h *BookHandler) GetBook(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid book ID"})
-		return
-	}
-
-	var book models.Book
-	if err := database.GetDB().Unscoped().Preload("Categories").Preload("Authors").First(&book, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch book"})
-		return
-	}
-
-	c.JSON(http.StatusOK, book)
-}
-
 // UpdateUserBook handles user book updates with file upload
 func (h *BookHandler) UpdateUserBook(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid book ID"})
-		return
-	}
+	id := c.Param("id")
+	var book models.Book
 
-	// Get authenticated user ID
+	// Check if book exists and belongs to user
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	uid, ok := userID.(uint)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+
+	if err := h.db.Unscoped().Preload("Authors").First(&book, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 		return
 	}
 
-	var book models.Book
-	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&book).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found or you don't have permission to edit it"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch book"})
+	if book.CreatedBy == nil || *book.CreatedBy != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to update this book"})
 		return
 	}
 
@@ -451,13 +646,34 @@ func (h *BookHandler) UpdateUserBook(c *gin.Context) {
 		return
 	}
 
-	// Update form fields if provided
+	// Update fields
 	if title := c.PostForm("title"); title != "" {
 		book.Title = title
 	}
-	if author := c.PostForm("author"); author != "" {
-		book.Author = author
+
+	// Get authors from form data
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		} else {
+			// If no new authors provided, use existing authors
+			authors = make([]string, len(book.Authors))
+			for i, author := range book.Authors {
+				authors[i] = author.AuthorName
+			}
+		}
 	}
+
+	// Validate required fields
+	if book.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
+		return
+	}
+
+	// Set the first author as the main author in the books table
+	book.Author = authors[0]
 
 	// Handle optional string fields
 	if publisher := c.PostForm("publisher"); publisher != "" {
@@ -511,146 +727,241 @@ func (h *BookHandler) UpdateUserBook(c *gin.Context) {
 			return
 		}
 
-		// Remove old file if exists
-		if book.FileURL != nil && *book.FileURL != "" {
-			os.Remove(*book.FileURL)
+		// Delete old file if exists
+		if book.FileURL != nil {
+			oldFilePath := *book.FileURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldFilePath, h.config.Server.BaseURL) {
+				oldFilePath = strings.TrimPrefix(oldFilePath, h.config.Server.BaseURL)
+				oldFilePath = strings.TrimPrefix(oldFilePath, "/")
+			}
+			if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old file: %v", err)
+			}
 		}
 
-		book.FileURL = &filePath
+		// Save file paths relative to uploads directory
+		fileURL := fmt.Sprintf("/uploads/books/%s", filepath.Base(filePath))
+		book.FileURL = &fileURL
 	}
 
-	// Save updates to database
-	if err := database.GetDB().Save(&book).Error; err != nil {
+	// Handle cover image upload
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
+
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+			return
+		}
+
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(book.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
+
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Delete old cover if exists
+		if book.CoverImageURL != nil {
+			oldCoverPath := *book.CoverImageURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldCoverPath, h.config.Server.BaseURL) {
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, h.config.Server.BaseURL)
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, "/")
+			}
+			if err := os.Remove(oldCoverPath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old cover: %v", err)
+			}
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
+		book.CoverImageURL = &coverImageURL
+	}
+
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Update book
+	if err := tx.Save(&book).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update book"})
 		return
 	}
+
+	// Delete existing authors
+	if err := tx.Where("book_id = ?", book.ID).Delete(&models.BookAuthor{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete existing authors"})
+		return
+	}
+
+	// Create new book authors
+	for _, authorName := range authors {
+		bookAuthor := models.BookAuthor{
+			BookID:     book.ID,
+			AuthorName: authorName,
+			UserID:     book.CreatedBy,
+		}
+		if err := tx.Create(&bookAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create book authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&book, book.ID)
 
 	c.JSON(http.StatusOK, book)
 }
 
 // DeleteUserBook handles user book deletion
 func (h *BookHandler) DeleteUserBook(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid book ID"})
-		return
-	}
+	id := c.Param("id")
+	var book models.Book
 
-	// Get authenticated user ID
+	// Check if book exists and belongs to user
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	uid, ok := userID.(uint)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+
+	if err := h.db.Unscoped().First(&book, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 		return
 	}
 
-	var book models.Book
-	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&book).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found or you don't have permission to delete it"})
-			return
+	if book.CreatedBy == nil || *book.CreatedBy != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to delete this book"})
+		return
+	}
+
+	// Delete file if exists
+	if book.FileURL != nil {
+		if err := os.Remove(*book.FileURL); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to delete file: %v", err)
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch book"})
-		return
 	}
 
-	if err := database.GetDB().Delete(&book).Error; err != nil {
+	// Delete from database
+	if err := h.db.Delete(&book).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete book"})
 		return
 	}
 
 	// Update book count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count - 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count - 1"))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Book deleted successfully"})
 }
 
 // DownloadBook handles book download requests
 func (h *BookHandler) DownloadBook(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid book ID"})
-		return
-	}
-
+	id := c.Param("id")
 	var book models.Book
-	if err := database.GetDB().Unscoped().First(&book, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch book"})
+
+	// Check if book exists
+	if err := h.db.Unscoped().First(&book, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 		return
 	}
 
-	if book.FileURL == nil || *book.FileURL == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "File not available"})
+	// Check if file exists
+	if book.FileURL == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Book file not found"})
 		return
 	}
 
-	// Log download activity
-	var userID *uint
-	if user, exists := c.Get("user_id"); exists {
-		if uid, ok := user.(uint); ok {
-			userID = &uid
-		}
+	// Check if user is authenticated
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
 	}
+	userID := userIDVal.(uint)
 
-	clientIP := c.ClientIP()
-	userAgent := c.Request.UserAgent()
+	// Log the download
 	download := models.Download{
-		UserID:       userID,
+		UserID:       &userID,
 		ItemID:       book.ID,
 		ItemType:     "book",
-		IPAddress:    &clientIP,
-		UserAgent:    &userAgent,
+		IPAddress:    nil,
+		UserAgent:    nil,
 		DownloadedAt: time.Now(),
 	}
-
-	database.GetDB().Create(&download)
-
-	// Update download counter
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_downloads").UpdateColumn("count", gorm.Expr("count + 1"))
-
-	// Serve the file directly
-	filePath := *book.FileURL
-	
-	// Extract file extension from the stored file path
-	ext := filepath.Ext(filePath)
-	filename := book.Title
-	if ext != "" {
-		filename = filename + ext
+	if ip := c.ClientIP(); ip != "" {
+		ipCopy := ip
+		download.IPAddress = &ipCopy
 	}
-	
-	// Set appropriate headers for file download
-	c.Header("Content-Description", "File Transfer")
-	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-	c.Header("Content-Type", "application/octet-stream")
-	
+	if ua := c.Request.UserAgent(); ua != "" {
+		uaCopy := ua
+		download.UserAgent = &uaCopy
+	}
+	h.db.Create(&download)
+
+	// Extract the file path from the URL
+	filePath := *book.FileURL
+	log.Printf("Original FileURL: %s", filePath)
+	log.Printf("BaseURL: %s", h.config.Server.BaseURL)
+
+	// Handle different URL formats
+	if strings.HasPrefix(filePath, "http") {
+		// Full URL - extract the path
+		if strings.HasPrefix(filePath, h.config.Server.BaseURL) {
+			filePath = strings.TrimPrefix(filePath, h.config.Server.BaseURL)
+			filePath = strings.TrimPrefix(filePath, "/")
+		}
+	} else if strings.HasPrefix(filePath, "/") {
+		// Absolute path - remove leading slash to make it relative
+		filePath = strings.TrimPrefix(filePath, "/")
+	}
+
+	log.Printf("Extracted filePath: %s", filePath)
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Printf("File does not exist: %s", filePath)
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found on disk"})
+		return
+	}
+
+	// Set the Content-Disposition header
+	filename := filepath.Base(filePath)
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	log.Printf("Serving file: %s", filePath)
 	// Serve the file
 	c.File(filePath)
 }
 
-// UpdateBook handles admin book updates with file upload
+// UpdateBook handles book updates with file upload
 func (h *BookHandler) UpdateBook(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid book ID"})
-		return
-	}
-
+	id := c.Param("id")
 	var book models.Book
-	if err := database.GetDB().Unscoped().First(&book, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch book"})
+
+	// Check if book exists
+	if err := h.db.Unscoped().First(&book, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 		return
 	}
 
@@ -660,13 +971,28 @@ func (h *BookHandler) UpdateBook(c *gin.Context) {
 		return
 	}
 
-	// Update form fields if provided
+	// Update fields
 	if title := c.PostForm("title"); title != "" {
 		book.Title = title
 	}
-	if author := c.PostForm("author"); author != "" {
-		book.Author = author
+
+	// Get authors from form data
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		}
 	}
+
+	// Validate required fields
+	if book.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
+		return
+	}
+
+	// Set the first author as the main author in the books table
+	book.Author = authors[0]
 
 	// Handle optional string fields
 	if publisher := c.PostForm("publisher"); publisher != "" {
@@ -720,48 +1046,175 @@ func (h *BookHandler) UpdateBook(c *gin.Context) {
 			return
 		}
 
-		// Remove old file if exists
-		if book.FileURL != nil && *book.FileURL != "" {
-			os.Remove(*book.FileURL)
+		// Delete old file if exists
+		if book.FileURL != nil {
+			oldFilePath := *book.FileURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldFilePath, h.config.Server.BaseURL) {
+				oldFilePath = strings.TrimPrefix(oldFilePath, h.config.Server.BaseURL)
+				oldFilePath = strings.TrimPrefix(oldFilePath, "/")
+			}
+			if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old file: %v", err)
+			}
 		}
 
-		book.FileURL = &filePath
+		// Save file paths relative to uploads directory
+		fileURL := fmt.Sprintf("/uploads/books/%s", filepath.Base(filePath))
+		book.FileURL = &fileURL
 	}
 
-	// Save updates to database
-	if err := database.GetDB().Save(&book).Error; err != nil {
+	// Handle cover image upload
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
+
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+			return
+		}
+
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(book.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
+
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Delete old cover if exists
+		if book.CoverImageURL != nil {
+			oldCoverPath := *book.CoverImageURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldCoverPath, h.config.Server.BaseURL) {
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, h.config.Server.BaseURL)
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, "/")
+			}
+			if err := os.Remove(oldCoverPath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old cover: %v", err)
+			}
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
+		book.CoverImageURL = &coverImageURL
+	}
+
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Update book
+	if err := tx.Save(&book).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update book"})
 		return
 	}
+
+	// Delete existing authors
+	if err := tx.Where("book_id = ?", book.ID).Delete(&models.BookAuthor{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete existing authors"})
+		return
+	}
+
+	// Create new book authors
+	for _, authorName := range authors {
+		bookAuthor := models.BookAuthor{
+			BookID:     book.ID,
+			AuthorName: authorName,
+			UserID:     book.CreatedBy,
+		}
+		if err := tx.Create(&bookAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create book authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&book, book.ID)
 
 	c.JSON(http.StatusOK, book)
 }
 
 // DeleteBook handles admin book deletion (soft delete)
 func (h *BookHandler) DeleteBook(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid book ID"})
-		return
-	}
-
+	id := c.Param("id")
 	var book models.Book
-	if err := database.GetDB().Unscoped().First(&book, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch book"})
+
+	// Check if book exists
+	if err := h.db.Unscoped().First(&book, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Book not found"})
 		return
 	}
 
-	if err := database.GetDB().Delete(&book).Error; err != nil {
+	// Delete file if exists
+	if book.FileURL != nil {
+		if err := os.Remove(*book.FileURL); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to delete file: %v", err)
+		}
+	}
+
+	// Delete from database
+	if err := h.db.Delete(&book).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete book"})
 		return
 	}
 
 	// Update book count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count - 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_books").UpdateColumn("count", gorm.Expr("count - 1"))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Book deleted successfully"})
-} 
+}
+
+// GetAuthorWorks handles GET /api/authors/:name/works
+func (h *BookHandler) GetAuthorWorks(c *gin.Context) {
+	authorName := c.Param("name")
+	if authorName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Author name is required"})
+		return
+	}
+
+	// Query books by author
+	var books []models.Book
+	if err := h.db.Where("author LIKE ?", "%"+authorName+"%").Find(&books).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch author works"})
+		return
+	}
+
+	// Convert file URLs to full URLs if they exist
+	for i := range books {
+		if books[i].FileURL != nil {
+			fileURL := *books[i].FileURL
+			if !strings.HasPrefix(fileURL, "http") {
+				fileURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, fileURL)
+				books[i].FileURL = &fileURL
+			}
+		}
+		if books[i].CoverImageURL != nil {
+			coverURL := *books[i].CoverImageURL
+			if !strings.HasPrefix(coverURL, "http") {
+				coverURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, coverURL)
+				books[i].CoverImageURL = &coverURL
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, books)
+}

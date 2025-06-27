@@ -4,41 +4,46 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
-import { 
-  BookOpenIcon, 
-  CalendarIcon, 
-  UserIcon, 
+import {
+  BookOpenIcon,
+  CalendarIcon,
+  UserIcon,
   DocumentArrowDownIcon,
   ArrowLeftIcon,
-  TagIcon
+  TagIcon,
+  ClipboardDocumentIcon
 } from '@heroicons/react/24/outline';
 import { booksAPI } from '@/lib/api';
+import { generateBookCitation } from '@/lib/citation';
+import Link from 'next/link';
+import { toast } from 'react-hot-toast';
 
 interface Book {
   id: number;
   title: string;
   author: string;
-  isbn: string;
-  publisher: string;
-  published_year: number;
-  pages: number;
-  language: string;
-  summary: string;
-  file_url?: string;
-  cover_image?: string;
-  subject: string;
-  categories: Array<{
-    id: number;
-    name: string;
-    description: string;
-    type: string;
-  }>;
-  authors: Array<{
+  authors?: Array<{
     id: number;
     author_name: string;
   }>;
+  publisher?: string;
+  published_year?: number;
+  isbn?: string;
+  subject?: string;
+  language?: string;
+  pages?: number;
+  summary?: string;
+  file_url?: string;
+  cover_image_url?: string;
+  created_by?: number;
   created_at: string;
   updated_at: string;
+  categories?: Array<{
+    id: number;
+    name: string;
+    description?: string;
+    type: string;
+  }>;
 }
 
 export default function BookDetailPage() {
@@ -49,17 +54,20 @@ export default function BookDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
+  const [showCitationModal, setShowCitationModal] = useState(false);
+  const [citationFormat, setCitationFormat] = useState<'apa' | 'mla' | 'chicago'>('apa');
+  const [citation, setCitation] = useState('');
 
   const bookId = params?.id as string;
 
   useEffect(() => {
     const fetchBook = async () => {
       if (!bookId) return;
-      
+
       setIsLoading(true);
       try {
-        const response = await api.get(`/books/${bookId}`);
-        setBook(response.data);
+        const response = await booksAPI.getBook(parseInt(bookId));
+        setBook(response);
         setError('');
       } catch (err) {
         console.error('Error fetching book:', err);
@@ -74,14 +82,64 @@ export default function BookDetailPage() {
 
   const handleDownload = async () => {
     if (!book?.file_url || !isAuthenticated) return;
-    
+
     setIsDownloading(true);
     try {
-      await booksAPI.downloadBook(book.id, book.title, book.file_url);
+      const response = await api.get(`/user/books/${book.id}/download`, {
+        responseType: 'blob',
+      });
+
+      // Create blob link to download
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+
+      // Try to get filename from Content-Disposition header first
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = book.title;
+
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      } else {
+        // Fallback: extract extension from file_url if available
+        if (book.file_url) {
+          const extension = book.file_url.split('.').pop();
+          filename = extension ? `${book.title}.${extension}` : book.title;
+        } else {
+          // Last resort fallback
+          filename = `${book.title}.pdf`;
+        }
+      }
+
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Download failed:', err);
+      toast.error('Failed to download book');
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleCite = () => {
+    if (!book) return;
+    const citation = generateBookCitation(book, citationFormat);
+    setCitation(citation);
+    setShowCitationModal(true);
+  };
+
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(citation);
+      alert('Citation copied to clipboard!');
+    } catch (err) {
+      console.error('Failed to copy citation:', err);
     }
   };
 
@@ -89,7 +147,7 @@ export default function BookDetailPage() {
     return (
       <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#4cae8a] mx-auto mb-4"></div>
           <p className="text-gray-600">Loading book details...</p>
         </div>
       </div>
@@ -104,7 +162,7 @@ export default function BookDetailPage() {
           <p className="text-gray-600 mb-4">{error || 'The book you are looking for does not exist.'}</p>
           <button
             onClick={() => router.push('/books')}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#4cae8a] hover:bg-[#357a5b]"
           >
             <ArrowLeftIcon className="h-4 w-4 mr-2" />
             Back to Books
@@ -121,7 +179,7 @@ export default function BookDetailPage() {
         <div className="mb-6">
           <button
             onClick={() => router.push('/books')}
-            className="inline-flex items-center text-blue-600 hover:text-blue-800"
+            className="inline-flex items-center text-[#4cae8a] hover:text-[#357a5b]"
           >
             <ArrowLeftIcon className="h-4 w-4 mr-2" />
             Back to Books
@@ -133,10 +191,10 @@ export default function BookDetailPage() {
             {/* Book Cover */}
             <div className="lg:col-span-4">
               <div className="aspect-w-3 aspect-h-4 bg-gray-200 overflow-hidden">
-                {book.cover_image ? (
+                {book.cover_image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={book.cover_image}
+                    src={book.cover_image_url}
                     alt={book.title}
                     className="w-full h-full object-center object-cover"
                   />
@@ -150,57 +208,144 @@ export default function BookDetailPage() {
 
             {/* Book Details */}
             <div className="lg:col-span-8 p-8">
-              <div className="mb-6">
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">{book.title}</h1>
-                <div className="flex items-center space-x-4 text-sm text-gray-600 mb-4">
-                  <div className="flex items-center">
-                    <UserIcon className="h-4 w-4 mr-1" />
-                    <span>{book.author}</span>
-                  </div>
-                  <div className="flex items-center">
-                    <CalendarIcon className="h-4 w-4 mr-1" />
-                    <span>{book.published_year}</span>
-                  </div>
-                  {book.subject && (
-                    <div className="flex items-center">
-                      <TagIcon className="h-4 w-4 mr-1" />
-                      <span>{book.subject}</span>
+              {/* Book Header */}
+              <div className="mb-8">
+                <div className="flex items-center mb-4">
+                  <div>
+                    <h1 className="text-3xl font-bold text-gray-900">{book.title}</h1>
+                    <div className="flex items-center space-x-4 text-sm text-gray-600 mb-4">
+                      <div className="flex items-center">
+                        <UserIcon className="h-4 w-4 mr-1" />
+                        <div className="flex flex-wrap gap-1">
+                          {book.authors && book.authors.length > 0 ? (
+                            book.authors.map((author, index) => (
+                              <React.Fragment key={author.id}>
+                                <Link
+                                  href={`/authors/${encodeURIComponent(author.author_name)}`}
+                                  className="text-[#4cae8a] hover:text-[#357a5b] hover:underline"
+                                >
+                                  {author.author_name}
+                                </Link>
+                                {index < book.authors!.length - 1 && <span>, </span>}
+                              </React.Fragment>
+                            ))
+                          ) : (
+                            <Link
+                              href={`/authors/${encodeURIComponent(book.author)}`}
+                              className="text-[#4cae8a] hover:text-[#357a5b] hover:underline"
+                            >
+                              {book.author}
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center">
+                        <CalendarIcon className="h-4 w-4 mr-1" />
+                        <span>{book.published_year}</span>
+                      </div>
+                      {book.subject && (
+                        <div className="flex items-center">
+                          <TagIcon className="h-4 w-4 mr-1" />
+                          <span>{book.subject}</span>
+                        </div>
+                      )}
                     </div>
+                  </div>
+                </div>
+
+                {/* Download and Cite Buttons */}
+                <div className="flex space-x-4">
+                  {isAuthenticated && book.file_url && (
+                    <button
+                      onClick={handleDownload}
+                      disabled={isDownloading}
+                      className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#4cae8a] hover:bg-[#357a5b] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#4cae8a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                    >
+                      <DocumentArrowDownIcon className={`h-4 w-4 mr-2 ${isDownloading ? 'animate-bounce' : ''}`} />
+                      {isDownloading ? 'Downloading...' : 'Download Book'}
+                    </button>
+                  )}
+
+                  {isAuthenticated && (
+                    <button
+                      onClick={handleCite}
+                      className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#4cae8a]"
+                    >
+                      <ClipboardDocumentIcon className="h-4 w-4 mr-2" />
+                      Cite
+                    </button>
                   )}
                 </div>
-                
-                {/* Download Button */}
-                {isAuthenticated && book.file_url && (
-                  <button
-                    onClick={handleDownload}
-                    disabled={isDownloading}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <DocumentArrowDownIcon className="h-4 w-4 mr-2" />
-                    {isDownloading ? 'Downloading...' : 'Download Book'}
-                  </button>
-                )}
 
                 {!isAuthenticated && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
                     <p className="text-sm text-yellow-800">
-                      Please <span className="font-medium">sign in</span> to download this book.
+                      Please <span className="font-medium">sign in</span> to download or cite this book.
                     </p>
+                  </div>
+                )}
+
+                {/* Citation Modal */}
+                {showCitationModal && (
+                  <div className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-lg max-w-2xl w-full p-6">
+                      <h3 className="text-lg font-medium text-gray-900 mb-4">Citation</h3>
+                      <div className="mb-4">
+                        <select
+                          value={citationFormat}
+                          onChange={(e) => {
+                            setCitationFormat(e.target.value as 'apa' | 'mla' | 'chicago');
+                            if (book) {
+                              setCitation(generateBookCitation(book, e.target.value as 'apa' | 'mla' | 'chicago'));
+                            }
+                          }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4cae8a]"
+                        >
+                          <option value="apa">APA</option>
+                          <option value="mla">MLA</option>
+                          <option value="chicago">Chicago</option>
+                        </select>
+                      </div>
+                      <div className="bg-gray-50 p-4 rounded-md mb-4">
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{citation}</p>
+                      </div>
+                      <div className="flex justify-end space-x-3">
+                        <button
+                          onClick={copyToClipboard}
+                          className="px-4 py-2 bg-[#4cae8a] text-white rounded-md hover:bg-[#357a5b]"
+                        >
+                          Copy to Clipboard
+                        </button>
+                        <button
+                          onClick={() => setShowCitationModal(false)}
+                          className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
 
-              {/* Book Information */}
-              <div className="space-y-6">
+              {/* Book Content */}
+              <div className="space-y-8">
+                {/* Summary */}
                 {book.summary && (
                   <div>
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">Summary</h3>
-                    <p className="text-gray-700 leading-relaxed">{book.summary}</p>
+                    <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                      <BookOpenIcon className="h-5 w-5 mr-2" />
+                      Summary
+                    </h3>
+                    <div className="bg-gray-50 rounded-lg p-6">
+                      <p className="text-gray-700 leading-relaxed">{book.summary}</p>
+                    </div>
                   </div>
                 )}
 
+                {/* Book Details */}
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Details</h3>
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Publication Details</h3>
                   <dl className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
                     <div>
                       <dt className="text-sm font-medium text-gray-500">ISBN</dt>
@@ -234,13 +379,14 @@ export default function BookDetailPage() {
                   <div>
                     <h3 className="text-lg font-medium text-gray-900 mb-3">Authors</h3>
                     <div className="flex flex-wrap gap-2">
-                      {book.authors.map((author, index) => (
-                        <span
-                          key={index}
-                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                      {book.authors.map((author) => (
+                        <Link
+                          key={author.id}
+                          href={`/authors/${encodeURIComponent(author.author_name)}`}
+                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 hover:bg-blue-200"
                         >
                           {author.author_name}
-                        </span>
+                        </Link>
                       ))}
                     </div>
                   </div>
@@ -263,15 +409,25 @@ export default function BookDetailPage() {
                   </div>
                 )}
 
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">Added to Repository</h3>
+                {/* Repository Information */}
+                <div className="border-t border-gray-200 pt-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">Repository Information</h3>
                   <p className="text-sm text-gray-600">
-                    {new Date(book.created_at).toLocaleDateString('en-US', {
+                    Added on {new Date(book.created_at).toLocaleDateString('en-US', {
                       year: 'numeric',
                       month: 'long',
                       day: 'numeric'
                     })}
                   </p>
+                  {book.updated_at !== book.created_at && (
+                    <p className="text-sm text-gray-600">
+                      Last updated on {new Date(book.updated_at).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      })}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

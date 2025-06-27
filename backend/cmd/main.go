@@ -38,13 +38,13 @@ func main() {
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Content-Length, Accept-Encoding, X-CSRF-Token, Accept")
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-		
+
 		c.Next()
 	})
 
@@ -52,96 +52,98 @@ func main() {
 	r.Static("/uploads", "./uploads")
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(config)
-	bookHandler := handlers.NewBookHandler(config)
-	paperHandler := handlers.NewPaperHandler(config)
+	authHandler := handlers.NewAuthHandler(database.GetDB(), config)
+	bookHandler := handlers.NewBookHandler(database.GetDB(), config)
+	paperHandler := handlers.NewPaperHandler(database.GetDB(), config)
+	authorHandler := handlers.NewAuthorHandler(database.GetDB())
+	statsHandler := handlers.NewStatsHandler(database.GetDB())
 
-	// Public routes
-	public := r.Group("/api/v1")
+	// API routes
+	api := r.Group("/api")
 	{
-		// Authentication routes
-		public.POST("/auth/register", authHandler.Register)
-		public.POST("/auth/login", authHandler.Login)
-
-		// Public book and paper access
-		public.GET("/books", bookHandler.GetBooks)
-		public.GET("/books/:id", bookHandler.GetBook)
-		public.GET("/papers", paperHandler.GetPapers)
-		public.GET("/papers/:id", paperHandler.GetPaper)
-
 		// Health check
-		public.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{
-				"status": "ok",
-				"message": "E-Repository API is running",
-			})
+		api.GET("/v1/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 		})
-	}
 
-	// Optional auth routes (can be accessed with or without auth)
-	optional := r.Group("/api/v1")
-	optional.Use(middleware.OptionalAuthMiddleware(config))
-	{
-		optional.GET("/books/:id/download", bookHandler.DownloadBook)
-		optional.GET("/papers/:id/download", paperHandler.DownloadPaper)
-	}
+		// Auth routes
+		auth := api.Group("/v1/auth")
+		{
+			auth.POST("/register", authHandler.Register)
+			auth.POST("/login", authHandler.Login)
+			auth.POST("/forgot-password", authHandler.ForgotPassword)
+			auth.POST("/reset-password", authHandler.ResetPassword)
+			auth.GET("/verify-email", authHandler.VerifyEmail)
+		}
 
-	// Protected routes (require authentication)
-	protected := r.Group("/api/v1")
-	protected.Use(middleware.AuthMiddleware(config))
-	{
-		// User profile routes
-		protected.GET("/profile", authHandler.GetProfile)
-		protected.PUT("/profile", authHandler.UpdateProfile)
-		protected.PUT("/profile/password", authHandler.ChangePassword)
-
-		// User content management
-		// Books
-		protected.POST("/user/books", bookHandler.CreateUserBook)
-		protected.GET("/user/books", bookHandler.GetUserBooks)
-		protected.PUT("/user/books/:id", bookHandler.UpdateUserBook)
-		protected.DELETE("/user/books/:id", bookHandler.DeleteUserBook)
-
-		// Papers
-		protected.POST("/user/papers", paperHandler.CreateUserPaper)
-		protected.GET("/user/papers", paperHandler.GetUserPapers)
-		protected.PUT("/user/papers/:id", paperHandler.UpdateUserPaper)
-		protected.DELETE("/user/papers/:id", paperHandler.DeleteUserPaper)
-	}
-
-	// Admin only routes
-	admin := r.Group("/api/v1/admin")
-	admin.Use(middleware.AuthMiddleware(config))
-	admin.Use(middleware.AdminMiddleware())
-	{
-		// Book management
-		admin.POST("/books", bookHandler.CreateBook)
-		admin.PUT("/books/:id", bookHandler.UpdateBook)
-		admin.DELETE("/books/:id", bookHandler.DeleteBook)
-
-		// Paper management
-		admin.POST("/papers", paperHandler.CreatePaper)
-		admin.PUT("/papers/:id", paperHandler.UpdatePaper)
-		admin.DELETE("/papers/:id", paperHandler.DeletePaper)
-
-		// Statistics
-		admin.GET("/stats", func(c *gin.Context) {
-			var stats map[string]interface{}
-			
-			// Get counters
-			var counters []struct {
-				Name  string `json:"name"`
-				Count int64  `json:"count"`
+		// Public content routes
+		public := api.Group("/v1")
+		{
+			public.GET("/books", bookHandler.GetBooks)
+			public.GET("/books/:id", bookHandler.GetBook)
+			public.GET("/papers", paperHandler.GetPapers)
+			public.GET("/papers/:id", paperHandler.GetPaper)
+			public.GET("/departments", authHandler.GetDepartments)
+			authors := public.Group("/authors")
+			{
+				authors.GET("/search", authorHandler.SearchAuthors)
+				authors.GET("/:name/works", authorHandler.GetAuthorWorks)
 			}
-			database.GetDB().Table("counters").Select("name, count").Find(&counters)
-			
-			stats = make(map[string]interface{})
-			for _, counter := range counters {
-				stats[counter.Name] = counter.Count
+			public.GET("/users/count", statsHandler.GetUserCount)
+			public.GET("/downloads/count", statsHandler.GetDownloadCount)
+		}
+
+		// Protected routes
+		protected := api.Group("/v1")
+		protected.Use(middleware.AuthMiddleware(config))
+		{
+			// Profile routes
+			protected.GET("/profile", authHandler.GetProfile)
+			protected.PUT("/profile", authHandler.UpdateProfile)
+			protected.PUT("/profile/password", authHandler.ChangePassword)
+
+			// User routes
+			user := protected.Group("/user")
+			{
+				// User book routes
+				user.POST("/books", bookHandler.CreateUserBook)
+				user.GET("/books", bookHandler.GetUserBooks)
+				user.PUT("/books/:id", bookHandler.UpdateUserBook)
+				user.DELETE("/books/:id", bookHandler.DeleteUserBook)
+				user.GET("/books/:id/download", bookHandler.DownloadBook)
+
+				// User paper routes
+				user.POST("/papers", paperHandler.CreateUserPaper)
+				user.GET("/papers", paperHandler.GetUserPapers)
+				user.PUT("/papers/:id", paperHandler.UpdateUserPaper)
+				user.DELETE("/papers/:id", paperHandler.DeleteUserPaper)
+				user.GET("/papers/:id/download", paperHandler.DownloadPaper)
 			}
-			
-			c.JSON(http.StatusOK, gin.H{"stats": stats})
-		})
+		}
+
+		// Admin routes
+		admin := api.Group("/v1/admin")
+		admin.Use(middleware.AuthMiddleware(config))
+		admin.Use(middleware.AdminMiddleware())
+		{
+			// Admin user management
+			admin.GET("/users", authHandler.GetAllUsers)
+			admin.GET("/users/:id", authHandler.GetUser)
+			admin.PUT("/users/:id", authHandler.UpdateUser)
+			admin.DELETE("/users/:id", authHandler.DeleteUser)
+			admin.GET("/lecturers", authHandler.GetPendingLecturers)
+			admin.POST("/lecturers/:id/approve", authHandler.ApproveLecturer)
+
+			// Admin repository management
+			admin.GET("/books", bookHandler.GetBooks)
+			admin.POST("/books", bookHandler.CreateBook)
+			admin.PUT("/books/:id", bookHandler.UpdateBook)
+			admin.DELETE("/books/:id", bookHandler.DeleteBook)
+			admin.GET("/papers", paperHandler.GetPapers)
+			admin.POST("/papers", paperHandler.CreatePaper)
+			admin.PUT("/papers/:id", paperHandler.UpdatePaper)
+			admin.DELETE("/papers/:id", paperHandler.DeletePaper)
+		}
 	}
 
 	// Start server
@@ -150,4 +152,4 @@ func main() {
 	if err := r.Run(port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
-} 
+}

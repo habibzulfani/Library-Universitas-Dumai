@@ -1,11 +1,21 @@
 # Dependencies
-FROM node:18-alpine AS deps
+FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies based on the preferred package manager
-COPY package.json package-lock.json ./
-RUN npm ci
+# Set npm config to handle network issues
+RUN npm config set registry https://registry.npmjs.org/ \
+    && npm config set fetch-retries 5 \
+    && npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with retry logic
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --no-audit || \
+    (npm cache clean --force && npm ci --prefer-offline --no-audit)
 
 # Builder
 FROM node:18-alpine AS builder
@@ -14,6 +24,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Build the application
+ENV NEXT_FORCE_SWCPACKAGE=1
 RUN npm run build
 
 # Runner

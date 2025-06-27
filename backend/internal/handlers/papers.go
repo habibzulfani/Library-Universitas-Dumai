@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,7 +12,6 @@ import (
 	"time"
 
 	"e-repository-api/configs"
-	"e-repository-api/internal/database"
 	"e-repository-api/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -18,17 +19,21 @@ import (
 )
 
 type PaperHandler struct {
+	db     *gorm.DB
 	config *configs.Config
 }
 
-func NewPaperHandler(config *configs.Config) *PaperHandler {
-	return &PaperHandler{config: config}
+func NewPaperHandler(db *gorm.DB, config *configs.Config) *PaperHandler {
+	return &PaperHandler{
+		db:     db,
+		config: config,
+	}
 }
 
 // CreatePaper handles paper creation with file upload
 func (h *PaperHandler) CreatePaper(c *gin.Context) {
 	var paper models.Paper
-	
+
 	// Parse multipart form
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB max
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
@@ -37,9 +42,15 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 
 	// Extract form fields
 	paper.Title = c.PostForm("title")
-	paper.Author = c.PostForm("author")
-	
-	// Handle optional string fields (convert to pointers)
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		}
+	}
+
+	// Handle optional string fields
 	if advisor := c.PostForm("advisor"); advisor != "" {
 		paper.Advisor = &advisor
 	}
@@ -55,11 +66,33 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 	if keywords := c.PostForm("keywords"); keywords != "" {
 		paper.Keywords = &keywords
 	}
+	if journal := c.PostForm("journal"); journal != "" {
+		paper.Journal = &journal
+	}
+	if issn := c.PostForm("issn"); issn != "" {
+		paper.ISSN = &issn
+	}
+	if doi := c.PostForm("doi"); doi != "" {
+		paper.DOI = &doi
+	}
+	if pages := c.PostForm("pages"); pages != "" {
+		paper.Pages = &pages
+	}
 
-	// Parse year field (convert to *int64)
+	// Parse numeric fields
 	if yearStr := c.PostForm("year"); yearStr != "" {
 		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
+		}
+	}
+	if volumeStr := c.PostForm("volume"); volumeStr != "" {
+		if volume, err := strconv.Atoi(volumeStr); err == nil {
+			paper.Volume = &volume
+		}
+	}
+	if issueStr := c.PostForm("issue"); issueStr != "" {
+		if issue, err := strconv.Atoi(issueStr); err == nil {
+			paper.Issue = &issue
 		}
 	}
 
@@ -71,10 +104,13 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 	}
 
 	// Validate required fields
-	if paper.Title == "" || paper.Author == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and author are required"})
+	if paper.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
 		return
 	}
+
+	// Set the first author as the main author in the papers table
+	paper.Author = authors[0]
 
 	// Handle file upload
 	file, header, err := c.Request.FormFile("file")
@@ -99,17 +135,51 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 			return
 		}
 
-		paper.FileURL = &filePath
+		// Save file paths relative to uploads directory
+		fileURL := fmt.Sprintf("/uploads/papers/%s", filepath.Base(filePath))
+		paper.FileURL = &fileURL
 	}
 
-	// Save to database
-	if err := database.GetDB().Create(&paper).Error; err != nil {
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Save paper
+	if err := tx.Create(&paper).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create paper"})
 		return
 	}
 
+	// Create paper authors
+	for _, authorName := range authors {
+		paperAuthor := models.PaperAuthor{
+			PaperID:    paper.ID,
+			AuthorName: authorName,
+			UserID:     paper.CreatedBy,
+		}
+		if err := tx.Create(&paperAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create paper authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
 	// Update paper count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count + 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count + 1"))
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&paper, paper.ID)
 
 	c.JSON(http.StatusCreated, paper)
 }
@@ -117,7 +187,7 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 // CreateUserPaper handles user paper creation with file upload
 func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 	var paper models.Paper
-	
+
 	// Parse multipart form
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB max
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse form"})
@@ -126,9 +196,15 @@ func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 
 	// Extract form fields
 	paper.Title = c.PostForm("title")
-	paper.Author = c.PostForm("author")
-	
-	// Handle optional string fields (convert to pointers)
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		}
+	}
+
+	// Handle optional string fields
 	if advisor := c.PostForm("advisor"); advisor != "" {
 		paper.Advisor = &advisor
 	}
@@ -144,11 +220,33 @@ func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 	if keywords := c.PostForm("keywords"); keywords != "" {
 		paper.Keywords = &keywords
 	}
+	if journal := c.PostForm("journal"); journal != "" {
+		paper.Journal = &journal
+	}
+	if issn := c.PostForm("issn"); issn != "" {
+		paper.ISSN = &issn
+	}
+	if doi := c.PostForm("doi"); doi != "" {
+		paper.DOI = &doi
+	}
+	if pages := c.PostForm("pages"); pages != "" {
+		paper.Pages = &pages
+	}
 
-	// Parse year field (convert to *int64)
+	// Parse numeric fields
 	if yearStr := c.PostForm("year"); yearStr != "" {
 		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
+		}
+	}
+	if volumeStr := c.PostForm("volume"); volumeStr != "" {
+		if volume, err := strconv.Atoi(volumeStr); err == nil {
+			paper.Volume = &volume
+		}
+	}
+	if issueStr := c.PostForm("issue"); issueStr != "" {
+		if issue, err := strconv.Atoi(issueStr); err == nil {
+			paper.Issue = &issue
 		}
 	}
 
@@ -163,45 +261,111 @@ func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 	}
 
 	// Validate required fields
-	if paper.Title == "" || paper.Author == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and author are required"})
+	if paper.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
 		return
 	}
 
+	// Set the first author as the main author in the papers table
+	paper.Author = authors[0]
+
 	// Handle file upload
 	file, header, err := c.Request.FormFile("file")
-	if err == nil {
-		defer file.Close()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File is required"})
+		return
+	}
+	defer file.Close()
 
-		// Create uploads directory if it doesn't exist
-		uploadDir := "uploads/papers"
-		if err := os.MkdirAll(uploadDir, 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
-			return
-		}
-
-		// Generate unique filename
-		ext := filepath.Ext(header.Filename)
-		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
-		filePath := filepath.Join(uploadDir, filename)
-
-		// Save file
-		if err := c.SaveUploadedFile(header, filePath); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
-			return
-		}
-
-		paper.FileURL = &filePath
+	// Create uploads directory if it doesn't exist
+	uploadDir := "uploads/papers"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+		return
 	}
 
-	// Save to database
-	if err := database.GetDB().Create(&paper).Error; err != nil {
+	// Generate unique filename
+	ext := filepath.Ext(header.Filename)
+	filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
+	filePath := filepath.Join(uploadDir, filename)
+
+	// Save file
+	if err := c.SaveUploadedFile(header, filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file"})
+		return
+	}
+
+	// Save file paths relative to uploads directory
+	fileURL := fmt.Sprintf("/uploads/papers/%s", filepath.Base(filePath))
+	paper.FileURL = &fileURL
+
+	// Handle cover image upload
+	if coverImage, header, err := c.Request.FormFile("coverImage"); err == nil {
+		defer coverImage.Close()
+
+		// Create cover images directory if it doesn't exist
+		coverDir := "uploads/covers"
+		if err := os.MkdirAll(coverDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create cover directory"})
+			return
+		}
+
+		// Generate unique filename for cover
+		ext := filepath.Ext(header.Filename)
+		filename := fmt.Sprintf("%d_%s_cover%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
+		coverPath := filepath.Join(coverDir, filename)
+
+		// Save cover image
+		if err := c.SaveUploadedFile(header, coverPath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(coverPath))
+		paper.CoverImageURL = &coverImageURL
+	}
+
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Save paper
+	if err := tx.Create(&paper).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create paper"})
 		return
 	}
 
+	// Create paper authors
+	for _, authorName := range authors {
+		paperAuthor := models.PaperAuthor{
+			PaperID:    paper.ID,
+			AuthorName: authorName,
+			UserID:     paper.CreatedBy,
+		}
+		if err := tx.Create(&paperAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create paper authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
 	// Update paper count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count + 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count + 1"))
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&paper, paper.ID)
 
 	c.JSON(http.StatusCreated, paper)
 }
@@ -225,13 +389,13 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Paper{}).Unscoped()
-	
+	query := h.db.Model(&models.Paper{}).Unscoped()
+
 	// Search functionality
 	if req.Query != "" {
 		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ?", 
-			searchTerm, searchTerm, searchTerm, searchTerm)
+		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ? OR LOWER(issn) LIKE ? OR CAST(year AS CHAR) LIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Category filter
@@ -246,85 +410,118 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 		query = query.Where("year = ?", *req.Year)
 	}
 
-	// Count total using raw SQL to avoid soft delete issues
+	// Get total count
 	var total int64
-	countSQL := "SELECT COUNT(*) FROM papers WHERE 1=1"
-	var countArgs []interface{}
-	
-	// Apply the same filters to count query
-	if req.Query != "" {
-		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ?)"
-		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm, searchTerm)
-	}
-	if req.Category != "" {
-		countSQL += " AND id IN (SELECT paper_id FROM paper_categories pc JOIN categories c ON pc.category_id = c.id WHERE c.name = ?)"
-		countArgs = append(countArgs, req.Category)
-	}
-	if req.Year != nil {
-		countSQL += " AND year = ?"
-		countArgs = append(countArgs, *req.Year)
-	}
-	
-	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
-
-	// Get papers with pagination
-	var papers []models.Paper
-	offset := (req.Page - 1) * req.Limit
-	if err := query.Offset(offset).Limit(req.Limit).Find(&papers).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch papers"})
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get total count"})
 		return
 	}
 
-	totalPages := int((total + int64(req.Limit) - 1) / int64(req.Limit))
+	// Get paginated results
+	var papers []models.Paper
+	offset := (req.Page - 1) * req.Limit
 
-	response := models.PaginatedResponse{
-		Data:       papers,
-		Total:      total,
-		Page:       req.Page,
-		Limit:      req.Limit,
-		TotalPages: totalPages,
+	// Handle sorting
+	if req.Sort != "" {
+		sortParts := strings.Split(req.Sort, ":")
+		if len(sortParts) == 2 {
+			field := sortParts[0]
+			direction := strings.ToUpper(sortParts[1])
+			if direction == "DESC" || direction == "ASC" {
+				query = query.Order(fmt.Sprintf("%s %s", field, direction))
+			}
+		}
+	} else {
+		// Default sorting by created_at desc
+		query = query.Order("created_at DESC")
+	}
+
+	if err := query.Offset(offset).Limit(req.Limit).Find(&papers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get papers"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":       total,
+		"page":        req.Page,
+		"limit":       req.Limit,
+		"total_pages": int(math.Ceil(float64(total) / float64(req.Limit))),
+		"data":        papers,
+	})
+}
+
+// GetPaper handles single paper retrieval
+func (h *PaperHandler) GetPaper(c *gin.Context) {
+	id := c.Param("id")
+	var paper models.Paper
+
+	// Load paper with its authors
+	if err := h.db.Unscoped().Preload("Authors").First(&paper, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
+		return
+	}
+
+	// Format the response to include authors array
+	response := gin.H{
+		"id":              paper.ID,
+		"title":           paper.Title,
+		"author":          paper.Author,
+		"authors":         make([]gin.H, 0),
+		"advisor":         paper.Advisor,
+		"university":      paper.University,
+		"department":      paper.Department,
+		"year":            paper.Year,
+		"issn":            paper.ISSN,
+		"journal":         paper.Journal,
+		"volume":          paper.Volume,
+		"issue":           paper.Issue,
+		"pages":           paper.Pages,
+		"doi":             paper.DOI,
+		"abstract":        paper.Abstract,
+		"keywords":        paper.Keywords,
+		"file_url":        paper.FileURL,
+		"cover_image_url": paper.CoverImageURL,
+		"created_by":      paper.CreatedBy,
+		"created_at":      paper.CreatedAt,
+		"updated_at":      paper.UpdatedAt,
+	}
+
+	// Add authors to the response
+	for _, author := range paper.Authors {
+		response["authors"] = append(response["authors"].([]gin.H), gin.H{
+			"id":          author.ID,
+			"author_name": author.AuthorName,
+		})
+	}
+
+	// Convert file URLs to full URLs if they exist
+	if paper.FileURL != nil {
+		fileURL := *paper.FileURL
+		if !strings.HasPrefix(fileURL, "http") {
+			fileURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, fileURL)
+			response["file_url"] = fileURL
+		}
+	}
+
+	if paper.CoverImageURL != nil {
+		coverURL := *paper.CoverImageURL
+		if !strings.HasPrefix(coverURL, "http") {
+			coverURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, coverURL)
+			response["cover_image_url"] = coverURL
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
 }
 
-// GetPaper handles getting a single paper by ID
-func (h *PaperHandler) GetPaper(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid paper ID"})
-		return
-	}
-
-	var paper models.Paper
-	if err := database.GetDB().Unscoped().Preload("Categories").Preload("Authors").First(&paper, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch paper"})
-		return
-	}
-
-	c.JSON(http.StatusOK, paper)
-}
-
-// UpdatePaper handles paper updates with file upload
+// UpdatePaper handles admin paper updates
 func (h *PaperHandler) UpdatePaper(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid paper ID"})
-		return
-	}
-
+	id := c.Param("id")
 	var paper models.Paper
-	if err := database.GetDB().Unscoped().First(&paper, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch paper"})
+
+	// Check if paper exists
+	if err := h.db.Unscoped().First(&paper, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 		return
 	}
 
@@ -334,12 +531,24 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 		return
 	}
 
-	// Update form fields if provided
+	// Update fields
 	if title := c.PostForm("title"); title != "" {
 		paper.Title = title
 	}
-	if author := c.PostForm("author"); author != "" {
-		paper.Author = author
+
+	// Get authors from form data
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		}
+	}
+
+	// Validate required fields
+	if paper.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
+		return
 	}
 
 	// Handle optional string fields
@@ -358,14 +567,33 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 	if keywords := c.PostForm("keywords"); keywords != "" {
 		paper.Keywords = &keywords
 	}
+	if journal := c.PostForm("journal"); journal != "" {
+		paper.Journal = &journal
+	}
 	if issn := c.PostForm("issn"); issn != "" {
 		paper.ISSN = &issn
 	}
+	if doi := c.PostForm("doi"); doi != "" {
+		paper.DOI = &doi
+	}
+	if pages := c.PostForm("pages"); pages != "" {
+		paper.Pages = &pages
+	}
 
-	// Parse year field
+	// Parse numeric fields
 	if yearStr := c.PostForm("year"); yearStr != "" {
 		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
+		}
+	}
+	if volumeStr := c.PostForm("volume"); volumeStr != "" {
+		if volume, err := strconv.Atoi(volumeStr); err == nil {
+			paper.Volume = &volume
+		}
+	}
+	if issueStr := c.PostForm("issue"); issueStr != "" {
+		if issue, err := strconv.Atoi(issueStr); err == nil {
+			paper.Issue = &issue
 		}
 	}
 
@@ -392,136 +620,227 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 			return
 		}
 
-		// Remove old file if exists
-		if paper.FileURL != nil && *paper.FileURL != "" {
-			os.Remove(*paper.FileURL)
+		// Delete old file if exists
+		if paper.FileURL != nil {
+			oldFilePath := *paper.FileURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldFilePath, h.config.Server.BaseURL) {
+				oldFilePath = strings.TrimPrefix(oldFilePath, h.config.Server.BaseURL)
+				oldFilePath = strings.TrimPrefix(oldFilePath, "/")
+			}
+			if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old file: %v", err)
+			}
 		}
 
-		paper.FileURL = &filePath
+		// Save file paths relative to uploads directory
+		fileURL := fmt.Sprintf("/uploads/papers/%s", filepath.Base(filePath))
+		paper.FileURL = &fileURL
 	}
 
-	// Save updates to database
-	if err := database.GetDB().Save(&paper).Error; err != nil {
+	// Handle cover image upload
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
+
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+			return
+		}
+
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
+
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Delete old cover if exists
+		if paper.CoverImageURL != nil {
+			oldCoverPath := *paper.CoverImageURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldCoverPath, h.config.Server.BaseURL) {
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, h.config.Server.BaseURL)
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, "/")
+			}
+			if err := os.Remove(oldCoverPath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old cover: %v", err)
+			}
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
+		paper.CoverImageURL = &coverImageURL
+	}
+
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Update paper
+	if err := tx.Save(&paper).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update paper"})
 		return
 	}
 
+	// Delete existing authors
+	if err := tx.Where("paper_id = ?", paper.ID).Delete(&models.PaperAuthor{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete existing authors"})
+		return
+	}
+
+	// Create new paper authors
+	for _, authorName := range authors {
+		paperAuthor := models.PaperAuthor{
+			PaperID:    paper.ID,
+			AuthorName: authorName,
+			UserID:     paper.CreatedBy,
+		}
+		if err := tx.Create(&paperAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create paper authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&paper, paper.ID)
+
 	c.JSON(http.StatusOK, paper)
 }
 
-// DeletePaper handles paper deletion (soft delete)
+// DeletePaper handles admin paper deletion
 func (h *PaperHandler) DeletePaper(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid paper ID"})
-		return
-	}
-
+	id := c.Param("id")
 	var paper models.Paper
-	if err := database.GetDB().Unscoped().First(&paper, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch paper"})
+
+	// Check if paper exists
+	if err := h.db.Unscoped().First(&paper, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 		return
 	}
 
-	if err := database.GetDB().Delete(&paper).Error; err != nil {
+	// Delete file if exists
+	if paper.FileURL != nil {
+		if err := os.Remove(*paper.FileURL); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to delete file: %v", err)
+		}
+	}
+
+	// Delete from database
+	if err := h.db.Delete(&paper).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete paper"})
 		return
 	}
 
 	// Update paper count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count - 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count - 1"))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Paper deleted successfully"})
 }
 
-// DownloadPaper handles paper download requests
+// DownloadPaper handles paper file download
 func (h *PaperHandler) DownloadPaper(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid paper ID"})
-		return
-	}
-
+	id := c.Param("id")
 	var paper models.Paper
-	if err := database.GetDB().Unscoped().First(&paper, uint(id)).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch paper"})
+
+	// Check if paper exists
+	if err := h.db.Unscoped().First(&paper, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 		return
 	}
 
-	if paper.FileURL == nil || *paper.FileURL == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "File not available"})
+	// Check if file exists
+	if paper.FileURL == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper file not found"})
 		return
 	}
 
-	// Log download activity
-	var userID *uint
-	if user, exists := c.Get("user_id"); exists {
-		if uid, ok := user.(uint); ok {
-			userID = &uid
-		}
-	}
-
-	clientIP := c.ClientIP()
-	userAgent := c.Request.UserAgent()
-	download := models.Download{
-		UserID:       userID,
-		ItemID:       paper.ID,
-		ItemType:     "paper",
-		IPAddress:    &clientIP,
-		UserAgent:    &userAgent,
-		DownloadedAt: time.Now(),
-	}
-
-	database.GetDB().Create(&download)
-
-	// Update download counter
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_downloads").UpdateColumn("count", gorm.Expr("count + 1"))
-
-	// Serve the file directly
-	filePath := *paper.FileURL
-	
-	// Extract file extension from the stored file path
-	ext := filepath.Ext(filePath)
-	filename := paper.Title
-	if ext != "" {
-		filename = filename + ext
-	}
-	
-	// Set appropriate headers for file download
-	c.Header("Content-Description", "File Transfer")
-	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
-	c.Header("Content-Type", "application/octet-stream")
-	
-	// Serve the file
-	c.File(filePath)
-}
-
-// GetUserPapers handles getting papers created by the authenticated user
-func (h *PaperHandler) GetUserPapers(c *gin.Context) {
-	var req models.SearchRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Get authenticated user ID
-	userID, exists := c.Get("user_id")
+	// Check if user is authenticated
+	userIDVal, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	uid, ok := userID.(uint)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+	userID := userIDVal.(uint)
+
+	// Log the download
+	download := models.Download{
+		UserID:       &userID,
+		ItemID:       paper.ID,
+		ItemType:     "paper",
+		IPAddress:    nil,
+		UserAgent:    nil,
+		DownloadedAt: time.Now(),
+	}
+	if ip := c.ClientIP(); ip != "" {
+		ipCopy := ip
+		download.IPAddress = &ipCopy
+	}
+	if ua := c.Request.UserAgent(); ua != "" {
+		uaCopy := ua
+		download.UserAgent = &uaCopy
+	}
+	h.db.Create(&download)
+
+	// Extract the file path from the URL
+	filePath := *paper.FileURL
+	log.Printf("Original FileURL: %s", filePath)
+	log.Printf("BaseURL: %s", h.config.Server.BaseURL)
+
+	// Handle different URL formats
+	if strings.HasPrefix(filePath, "http") {
+		// Full URL - extract the path
+		if strings.HasPrefix(filePath, h.config.Server.BaseURL) {
+			filePath = strings.TrimPrefix(filePath, h.config.Server.BaseURL)
+			filePath = strings.TrimPrefix(filePath, "/")
+		}
+	} else if strings.HasPrefix(filePath, "/") {
+		// Absolute path - remove leading slash to make it relative
+		filePath = strings.TrimPrefix(filePath, "/")
+	}
+
+	log.Printf("Extracted filePath: %s", filePath)
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Printf("File does not exist: %s", filePath)
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found on disk"})
+		return
+	}
+
+	// Set the Content-Disposition header
+	filename := filepath.Base(filePath)
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	log.Printf("Serving file: %s", filePath)
+	// Serve the file
+	c.File(filePath)
+}
+
+// GetUserPapers handles user paper listing with pagination and search
+func (h *PaperHandler) GetUserPapers(c *gin.Context) {
+	var req models.SearchRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -536,13 +855,20 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	query := database.GetDB().Model(&models.Paper{}).Unscoped().Where("created_by = ?", uid)
-	
+	// Get user ID from context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	query := h.db.Model(&models.Paper{}).Unscoped().Where("created_by = ?", userID)
+
 	// Search functionality
 	if req.Query != "" {
 		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ?", 
-			searchTerm, searchTerm, searchTerm, searchTerm)
+		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ? OR LOWER(issn) LIKE ? OR CAST(year AS CHAR) LIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Category filter
@@ -557,76 +883,61 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 		query = query.Where("year = ?", *req.Year)
 	}
 
-	// Count total using raw SQL to avoid soft delete issues
+	// Get total count
 	var total int64
-	countSQL := "SELECT COUNT(*) FROM papers WHERE 1=1"
-	var countArgs []interface{}
-	
-	// Apply the same filters to count query
-	if req.Query != "" {
-		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		countSQL += " AND (LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ?)"
-		countArgs = append(countArgs, searchTerm, searchTerm, searchTerm, searchTerm)
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get total count"})
+		return
 	}
-	if req.Category != "" {
-		countSQL += " AND id IN (SELECT paper_id FROM paper_categories pc JOIN categories c ON pc.category_id = c.id WHERE c.name = ?)"
-		countArgs = append(countArgs, req.Category)
-	}
-	if req.Year != nil {
-		countSQL += " AND year = ?"
-		countArgs = append(countArgs, *req.Year)
-	}
-	
-	database.GetDB().Raw(countSQL, countArgs...).Scan(&total)
 
-	// Get papers with pagination
+	// Get paginated results
 	var papers []models.Paper
 	offset := (req.Page - 1) * req.Limit
 	if err := query.Offset(offset).Limit(req.Limit).Find(&papers).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch papers"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get papers"})
 		return
 	}
 
-	totalPages := int((total + int64(req.Limit) - 1) / int64(req.Limit))
-
-	response := models.PaginatedResponse{
-		Data:       papers,
-		Total:      total,
-		Page:       req.Page,
-		Limit:      req.Limit,
-		TotalPages: totalPages,
+	// Convert file URLs to full URLs
+	for i := range papers {
+		if papers[i].FileURL != nil {
+			fileURL := fmt.Sprintf("%s/%s", h.config.Server.BaseURL, *papers[i].FileURL)
+			papers[i].FileURL = &fileURL
+		}
+		if papers[i].CoverImageURL != nil {
+			coverURL := fmt.Sprintf("%s/%s", h.config.Server.BaseURL, *papers[i].CoverImageURL)
+			papers[i].CoverImageURL = &coverURL
+		}
 	}
 
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusOK, gin.H{
+		"total":       total,
+		"page":        req.Page,
+		"limit":       req.Limit,
+		"total_pages": int(math.Ceil(float64(total) / float64(req.Limit))),
+		"data":        papers,
+	})
 }
 
-// UpdateUserPaper handles user paper updates with file upload
+// UpdateUserPaper handles user paper updates
 func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid paper ID"})
-		return
-	}
+	id := c.Param("id")
+	var paper models.Paper
 
-	// Get authenticated user ID
+	// Check if paper exists and belongs to user
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	uid, ok := userID.(uint)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+
+	if err := h.db.Unscoped().Preload("Authors").First(&paper, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 		return
 	}
 
-	var paper models.Paper
-	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&paper).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found or you don't have permission to edit it"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch paper"})
+	if paper.CreatedBy == nil || *paper.CreatedBy != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to update this paper"})
 		return
 	}
 
@@ -636,13 +947,34 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 		return
 	}
 
-	// Update form fields if provided
+	// Update fields
 	if title := c.PostForm("title"); title != "" {
 		paper.Title = title
 	}
-	if author := c.PostForm("author"); author != "" {
-		paper.Author = author
+
+	// Get authors from form data
+	authors := c.PostFormArray("authors[]")
+	if len(authors) == 0 {
+		// Fallback to single author if no authors array is provided
+		if author := c.PostForm("author"); author != "" {
+			authors = []string{author}
+		} else {
+			// If no new authors provided, use existing authors
+			authors = make([]string, len(paper.Authors))
+			for i, author := range paper.Authors {
+				authors[i] = author.AuthorName
+			}
+		}
 	}
+
+	// Validate required fields
+	if paper.Title == "" || len(authors) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Title and at least one author are required"})
+		return
+	}
+
+	// Set the first author as the main author in the papers table
+	paper.Author = authors[0]
 
 	// Handle optional string fields
 	if advisor := c.PostForm("advisor"); advisor != "" {
@@ -660,11 +992,33 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 	if keywords := c.PostForm("keywords"); keywords != "" {
 		paper.Keywords = &keywords
 	}
+	if journal := c.PostForm("journal"); journal != "" {
+		paper.Journal = &journal
+	}
+	if issn := c.PostForm("issn"); issn != "" {
+		paper.ISSN = &issn
+	}
+	if doi := c.PostForm("doi"); doi != "" {
+		paper.DOI = &doi
+	}
+	if pages := c.PostForm("pages"); pages != "" {
+		paper.Pages = &pages
+	}
 
-	// Parse year field
+	// Parse numeric fields
 	if yearStr := c.PostForm("year"); yearStr != "" {
 		if year, err := strconv.Atoi(yearStr); err == nil {
 			paper.Year = &year
+		}
+	}
+	if volumeStr := c.PostForm("volume"); volumeStr != "" {
+		if volume, err := strconv.Atoi(volumeStr); err == nil {
+			paper.Volume = &volume
+		}
+	}
+	if issueStr := c.PostForm("issue"); issueStr != "" {
+		if issue, err := strconv.Atoi(issueStr); err == nil {
+			paper.Issue = &issue
 		}
 	}
 
@@ -691,60 +1045,150 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 			return
 		}
 
-		// Remove old file if exists
-		if paper.FileURL != nil && *paper.FileURL != "" {
-			os.Remove(*paper.FileURL)
+		// Delete old file if exists
+		if paper.FileURL != nil {
+			oldFilePath := *paper.FileURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldFilePath, h.config.Server.BaseURL) {
+				oldFilePath = strings.TrimPrefix(oldFilePath, h.config.Server.BaseURL)
+				oldFilePath = strings.TrimPrefix(oldFilePath, "/")
+			}
+			if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old file: %v", err)
+			}
 		}
 
-		paper.FileURL = &filePath
+		// Save file paths relative to uploads directory
+		fileURL := fmt.Sprintf("/uploads/papers/%s", filepath.Base(filePath))
+		paper.FileURL = &fileURL
 	}
 
-	// Save updates to database
-	if err := database.GetDB().Save(&paper).Error; err != nil {
+	// Handle cover image upload
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
+
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+			return
+		}
+
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
+
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Delete old cover if exists
+		if paper.CoverImageURL != nil {
+			oldCoverPath := *paper.CoverImageURL
+			// Remove base URL if present
+			if strings.HasPrefix(oldCoverPath, h.config.Server.BaseURL) {
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, h.config.Server.BaseURL)
+				oldCoverPath = strings.TrimPrefix(oldCoverPath, "/")
+			}
+			if err := os.Remove(oldCoverPath); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete old cover: %v", err)
+			}
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
+		paper.CoverImageURL = &coverImageURL
+	}
+
+	// Start a transaction
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// Update paper
+	if err := tx.Save(&paper).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update paper"})
 		return
 	}
+
+	// Delete existing authors
+	if err := tx.Where("paper_id = ?", paper.ID).Delete(&models.PaperAuthor{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete existing authors"})
+		return
+	}
+
+	// Create new paper authors
+	for _, authorName := range authors {
+		paperAuthor := models.PaperAuthor{
+			PaperID:    paper.ID,
+			AuthorName: authorName,
+			UserID:     paper.CreatedBy,
+		}
+		if err := tx.Create(&paperAuthor).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create paper authors"})
+			return
+		}
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	// Load authors for response
+	h.db.Preload("Authors").First(&paper, paper.ID)
 
 	c.JSON(http.StatusOK, paper)
 }
 
 // DeleteUserPaper handles user paper deletion
 func (h *PaperHandler) DeleteUserPaper(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid paper ID"})
-		return
-	}
+	id := c.Param("id")
+	var paper models.Paper
 
-	// Get authenticated user ID
+	// Check if paper exists and belongs to user
 	userID, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	uid, ok := userID.(uint)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID"})
+
+	if err := h.db.Unscoped().First(&paper, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
 		return
 	}
 
-	var paper models.Paper
-	if err := database.GetDB().Unscoped().Where("id = ? AND created_by = ?", uint(id), uid).First(&paper).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found or you don't have permission to delete it"})
-			return
+	if paper.CreatedBy == nil || *paper.CreatedBy != userID.(uint) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Not authorized to delete this paper"})
+		return
+	}
+
+	// Delete file if exists
+	if paper.FileURL != nil {
+		if err := os.Remove(*paper.FileURL); err != nil && !os.IsNotExist(err) {
+			log.Printf("Failed to delete file: %v", err)
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch paper"})
-		return
 	}
 
-	if err := database.GetDB().Delete(&paper).Error; err != nil {
+	// Delete from database
+	if err := h.db.Delete(&paper).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete paper"})
 		return
 	}
 
 	// Update paper count
-	database.GetDB().Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count - 1"))
+	h.db.Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count - 1"))
 
 	c.JSON(http.StatusOK, gin.H{"message": "Paper deleted successfully"})
-} 
+}

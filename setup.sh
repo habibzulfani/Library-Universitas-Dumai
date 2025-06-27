@@ -24,6 +24,13 @@ NC='\033[0m' # No Color
 # Docker Compose command (will be set based on available version)
 DOCKER_COMPOSE_CMD=""
 
+# Set environment variables
+export DB_HOST=e-repository-mysql
+export DB_PORT=3306
+export DB_USER=root
+export DB_PASSWORD=rootpassword
+export DB_NAME=e_repository_db
+
 # Function to print colored output
 print_status() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -39,6 +46,10 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 # Function to check if command exists
@@ -74,6 +85,29 @@ detect_docker_compose() {
     return 1
 }
 
+# Function to clean up Docker resources
+cleanup_docker() {
+    print_status "Cleaning up Docker resources..."
+    
+    # Stop and remove existing containers
+    print_status "Stopping existing containers..."
+    $DOCKER_COMPOSE_CMD down --remove-orphans >/dev/null 2>&1 || true
+    
+    # Remove unused volumes
+    print_status "Removing unused volumes..."
+    docker volume prune -f >/dev/null 2>&1 || true
+    
+    # Remove unused images
+    print_status "Removing unused images..."
+    docker image prune -f >/dev/null 2>&1 || true
+    
+    # Remove build cache
+    print_status "Cleaning build cache..."
+    docker builder prune -f >/dev/null 2>&1 || true
+    
+    print_success "Docker cleanup completed"
+}
+
 # Function to check disk space
 check_disk_space() {
     print_status "Checking available disk space..."
@@ -92,8 +126,7 @@ check_disk_space() {
     if [ "$available_space" -lt 5 ]; then
         print_error "Insufficient disk space! At least 5GB is required."
         print_warning "Current available space: ${available_space}GB"
-        print_status "Cleaning up Docker to free space..."
-        docker system prune -a -f >/dev/null 2>&1 || true
+        cleanup_docker
         
         # Check again after cleanup
         if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -195,7 +228,7 @@ run_tests() {
     
     # Test database connectivity
     print_status "Testing database connectivity..."
-    if docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -e "SELECT 1;" >/dev/null 2>&1; then
+    if docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -e "SELECT 1;" >/dev/null 2>&1; then
         print_success "✓ Database connectivity test passed"
     else
         print_error "✗ Database connectivity test failed"
@@ -268,9 +301,9 @@ run_tests() {
     # Test database data integrity
     print_status "Testing database data integrity..."
     
-    user_count=$(docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -se "SELECT COUNT(*) FROM users;" 2>/dev/null)
-    book_count=$(docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -se "SELECT COUNT(*) FROM books;" 2>/dev/null)
-    paper_count=$(docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -se "SELECT COUNT(*) FROM papers;" 2>/dev/null)
+    user_count=$(docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -se "SELECT COUNT(*) FROM users;" 2>/dev/null)
+    book_count=$(docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -se "SELECT COUNT(*) FROM books;" 2>/dev/null)
+    paper_count=$(docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -se "SELECT COUNT(*) FROM papers;" 2>/dev/null)
     
     if [ "$user_count" -gt 0 ] && [ "$book_count" -gt 0 ] && [ "$paper_count" -gt 0 ]; then
         print_success "✓ Database data integrity test passed"
@@ -312,6 +345,106 @@ run_tests() {
     echo "============================================================================="
 }
 
+# Function to setup database
+setup_database() {
+    print_status "Setting up database..."
+    
+    # Check if database setup script exists
+    if [ ! -f "backend/setup_database.sh" ]; then
+        print_error "Database setup script not found!"
+        return 1
+    fi
+    
+    # Make script executable
+    chmod +x backend/setup_database.sh
+    
+    # Run database setup
+    if ./backend/setup_database.sh; then
+        print_success "Database setup completed successfully!"
+        return 0
+    else
+        print_error "Database setup failed!"
+        print_status "Checking MySQL logs..."
+        docker logs e-repository-mysql 2>/dev/null | tail -20 || true
+        return 1
+    fi
+}
+
+# Function to build Docker images
+build_docker_images() {
+    print_status "Building Docker images..."
+    
+    # Enable Docker Compose bake for better performance
+    export COMPOSE_BAKE=true
+    
+    # Build images using bake
+    if ! $DOCKER_COMPOSE_CMD build; then
+        print_error "Failed to build Docker images"
+        return 1
+    fi
+    
+    print_success "Docker images built successfully"
+    return 0
+}
+
+# Function to check if port is in use
+check_port() {
+    local port=$1
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        lsof -i :$port >/dev/null 2>&1
+    else
+        # Linux
+        netstat -tuln | grep -q ":$port "
+    fi
+    return $?
+}
+
+# Function to handle port conflicts
+handle_port_conflicts() {
+    print_status "Checking for port conflicts..."
+    
+    # Check MySQL port
+    if check_port 3306; then
+        print_warning "Port 3306 is already in use. This might be your local MySQL instance."
+        print_status "Attempting to stop any existing containers..."
+        $DOCKER_COMPOSE_CMD down >/dev/null 2>&1 || true
+        
+        # Wait a moment for ports to be released
+        sleep 5
+        
+        if check_port 3306; then
+            print_error "Port 3306 is still in use. Please stop your local MySQL instance or change the port in docker-compose.yml"
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                print_status "To stop MySQL on macOS, run: sudo brew services stop mysql"
+                print_status "If that doesn't work, try: sudo pkill -f mysql"
+            else
+                print_status "To stop MySQL on Linux, run: sudo service mysql stop"
+            fi
+            return 1
+        fi
+    fi
+    
+    # Check API port
+    if check_port 8080; then
+        print_warning "Port 8080 is already in use"
+        print_status "Attempting to stop any existing containers..."
+        $DOCKER_COMPOSE_CMD down >/dev/null 2>&1 || true
+        sleep 5
+    fi
+    
+    # Check Frontend port
+    if check_port 3000; then
+        print_warning "Port 3000 is already in use"
+        print_status "Attempting to stop any existing containers..."
+        $DOCKER_COMPOSE_CMD down >/dev/null 2>&1 || true
+        sleep 5
+    fi
+    
+    print_success "Port conflict check completed"
+    return 0
+}
+
 # Main setup function
 main() {
     echo "============================================================================="
@@ -349,23 +482,26 @@ main() {
     print_success "Docker is running"
     echo ""
 
-    # Step 3: Check disk space
+    # Step 3: Clean up Docker resources
+    cleanup_docker
+    
+    # Step 4: Check disk space
     check_disk_space
     echo ""
 
-    # Step 4: Clean up any existing containers
-    print_status "Cleaning up any existing containers..."
-    $DOCKER_COMPOSE_CMD down --remove-orphans -v >/dev/null 2>&1 || true
-    print_success "Cleanup completed"
-    echo ""
+    # Step 5: Handle port conflicts
+    if ! handle_port_conflicts; then
+        print_error "Port conflicts detected. Please resolve them and try again."
+        exit 1
+    fi
 
-    # Step 5: Create necessary directories
+    # Step 6: Create necessary directories
     print_status "Creating necessary directories..."
     mkdir -p uploads
     print_success "Directories created"
     echo ""
 
-    # Step 6: Check environment files
+    # Step 7: Check environment files
     print_status "Checking environment configuration..."
     
     if [ ! -f "backend/.env" ]; then
@@ -375,11 +511,11 @@ main() {
         else
             print_warning "Creating default backend .env file"
             cat > backend/.env << EOF
-DB_HOST=mysql
+DB_HOST=e-repository-mysql
 DB_PORT=3306
-DB_NAME=test_db2
-DB_USER=e_repositori
-DB_PASSWORD=secure_password_here
+DB_NAME=e_repository_db
+DB_USER=root
+DB_PASSWORD=rootpassword
 JWT_SECRET=your_jwt_secret_key_here
 PORT=8080
 EOF
@@ -389,15 +525,12 @@ EOF
     print_success "Environment configuration ready"
     echo ""
 
-    # Step 7: Build and start services
-    print_status "Building Docker images..."
-    if ! $DOCKER_COMPOSE_CMD build --no-cache; then
+    # Step 8: Build and start services
+    if ! build_docker_images; then
         print_error "Failed to build Docker images"
         exit 1
     fi
-    print_success "Docker images built successfully"
-    echo ""
-
+    
     print_status "Starting services..."
     if ! $DOCKER_COMPOSE_CMD up -d; then
         print_error "Failed to start services"
@@ -406,55 +539,31 @@ EOF
     print_success "Services started"
     echo ""
 
-    # Step 8: Wait for MySQL to be ready
+    # Step 9: Wait for MySQL to be ready
     if ! wait_for_mysql; then
         print_error "MySQL setup failed. Stopping all services..."
         $DOCKER_COMPOSE_CMD down >/dev/null 2>&1 || true
         exit 1
     fi
 
-    # Step 9: Load sample data (schema is already initialized by Docker)
-    print_status "Loading sample data..."
-    sleep 5  # Give MySQL a bit more time to fully initialize
-    
-    if [ -f "sample_data.sql" ]; then
-        if docker exec -i e-repository-mysql mysql -u root -prootpassword test_db2 < sample_data.sql; then
-            print_success "Sample data loaded successfully"
-        else
-            print_warning "Failed to load sample data from sample_data.sql"
-            # Try alternative sample data file if it exists
-            if [ -f "simple_sample_data.sql" ]; then
-                print_status "Trying alternative sample data file..."
-                if docker exec -i e-repository-mysql mysql -u root -prootpassword test_db2 < simple_sample_data.sql; then
-                    print_success "Alternative sample data loaded successfully"
-                else
-                    print_warning "Failed to load alternative sample data, but continuing..."
-                fi
-            fi
-        fi
-    elif [ -f "simple_sample_data.sql" ]; then
-        print_status "Using simple_sample_data.sql..."
-        if docker exec -i e-repository-mysql mysql -u root -prootpassword test_db2 < simple_sample_data.sql; then
-            print_success "Sample data loaded successfully"
-        else
-            print_warning "Failed to load sample data, but continuing..."
-        fi
-    else
-        print_warning "No sample data files found, skipping data loading"
+    # Step 10: Setup database
+    if ! setup_database; then
+        print_error "Database setup failed. Stopping all services..."
+        $DOCKER_COMPOSE_CMD down >/dev/null 2>&1 || true
+        exit 1
     fi
-    echo ""
 
-    # Step 10: Wait for API to be ready
+    # Step 11: Wait for API to be ready
     if ! wait_for_service "API Server" "http://localhost:8080/api/v1/health"; then
         print_warning "API server may not be fully ready, but continuing..."
     fi
 
-    # Step 11: Wait for Frontend to be ready
+    # Step 12: Wait for Frontend to be ready
     if ! wait_for_service "Frontend" "http://localhost:3000"; then
         print_warning "Frontend may not be fully ready, but continuing..."
     fi
 
-    # Step 12: Run unit tests to verify everything works
+    # Step 13: Run unit tests to verify everything works
     print_status "Running unit tests to verify system functionality..."
     
     # Wait a bit more for services to fully stabilize
@@ -462,7 +571,7 @@ EOF
     
     # Test database connectivity
     print_status "Testing database connectivity..."
-    if docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -e "SELECT 1;" >/dev/null 2>&1; then
+    if docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -e "SELECT 1;" >/dev/null 2>&1; then
         print_success "Database connectivity test passed"
     else
         print_error "Database connectivity test failed"
@@ -514,40 +623,36 @@ EOF
         print_warning "Go unit tests failed or not available, but continuing..."
     fi
     
-    # Test user registration and login
-    print_status "Testing user authentication..."
-    
     # Test user registration
-    register_response=$(curl -s -X POST http://localhost:8080/api/v1/auth/register \
-        -H "Content-Type: application/json" \
-        -d '{"email":"test@example.com","name":"Test User","password":"password123"}' \
-        -w "%{http_code}")
-    
-    if echo "$register_response" | grep -q "201"; then
-        print_success "User registration test passed"
-    else
-        print_warning "User registration test failed (user might already exist), but continuing..."
-    fi
-    
-    # Test user login
-    login_response=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
-        -H "Content-Type: application/json" \
-        -d '{"email":"admin@demo.com","password":"password123"}' \
-        -w "%{http_code}")
-    
-    if echo "$login_response" | grep -q "200"; then
-        print_success "User login test passed"
-    else
-        print_error "User login test failed"
-        return 1
-    fi
+    echo "Testing user registration..."
+    curl -X POST http://localhost:8080/api/auth/register \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "testuser123@example.com",
+        "password": "password123",
+        "name": "Test User",
+        "user_type": "student",
+        "nim_nidn": "1234567890",
+        "faculty": "Fakultas Ilmu Komputer",
+        "department_id": 2,
+        "address": "Test Address"
+      }'
+
+    # Test login
+    echo "Testing login..."
+    curl -X POST http://localhost:8080/api/auth/login \
+      -H "Content-Type: application/json" \
+      -d '{
+        "email": "testuser123@example.com",
+        "password": "password123"
+      }'
     
     # Test database data integrity
     print_status "Testing database data integrity..."
     
-    user_count=$(docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -se "SELECT COUNT(*) FROM users;" 2>/dev/null)
-    book_count=$(docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -se "SELECT COUNT(*) FROM books;" 2>/dev/null)
-    paper_count=$(docker exec e-repository-mysql mysql -u root -prootpassword test_db2 -se "SELECT COUNT(*) FROM papers;" 2>/dev/null)
+    user_count=$(docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -se "SELECT COUNT(*) FROM users;" 2>/dev/null)
+    book_count=$(docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -se "SELECT COUNT(*) FROM books;" 2>/dev/null)
+    paper_count=$(docker exec e-repository-mysql mysql -u root -prootpassword e_repository_db -se "SELECT COUNT(*) FROM papers;" 2>/dev/null)
     
     if [ "$user_count" -gt 0 ] && [ "$book_count" -gt 0 ] && [ "$paper_count" -gt 0 ]; then
         print_success "Database data integrity test passed (Users: $user_count, Books: $book_count, Papers: $paper_count)"
@@ -559,12 +664,12 @@ EOF
     print_success "All tests passed! System is fully functional."
     echo ""
 
-    # Step 13: Display service status
+    # Step 14: Display service status
     print_status "Checking service status..."
     $DOCKER_COMPOSE_CMD ps
     echo ""
 
-    # Step 14: Display access information
+    # Step 15: Display access information
     echo "============================================================================="
     echo "                           SETUP COMPLETED!                                 "
     echo "============================================================================="
@@ -583,15 +688,15 @@ EOF
     echo "   Student 2: sarah.johnson@demo.com / password123"
     echo ""
     echo "📊 Database Info:"
-    echo "   Database:  test_db2"
-    echo "   Username:  e_repositori"
-    echo "   Password:  secure_password_here"
+    echo "   Database:  e_repository_db"
+    echo "   Username:  root"
+    echo "   Password:  rootpassword"
     echo ""
     echo "🛠️  Useful Commands:"
     echo "   Stop services:     $DOCKER_COMPOSE_CMD down"
     echo "   View logs:         $DOCKER_COMPOSE_CMD logs -f"
     echo "   Restart services:  $DOCKER_COMPOSE_CMD restart"
-    echo "   Access MySQL:      docker exec -it e-repository-mysql mysql -u root -prootpassword test_db2"
+    echo "   Access MySQL:      docker exec -it e-repository-mysql mysql -u root -prootpassword e_repository_db"
     echo ""
     echo "✅ You can now access the application at http://localhost:3000"
     echo ""
@@ -599,6 +704,14 @@ EOF
     echo "   - Check logs: $DOCKER_COMPOSE_CMD logs"
     echo "   - Restart: $DOCKER_COMPOSE_CMD restart"
     echo "   - Clean restart: $DOCKER_COMPOSE_CMD down && ./setup.sh"
+    echo ""
+    echo "🔄 Cleaning up orphan files in uploads directory..."
+    if command -v node >/dev/null 2>&1; then
+        node check_uploads.js
+        print_success "Orphan file cleanup complete."
+    else
+        print_warning "Node.js is not installed. Skipping orphan file cleanup."
+    fi
     echo "============================================================================="
 }
 

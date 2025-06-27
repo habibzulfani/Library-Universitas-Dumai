@@ -47,8 +47,8 @@ func (suite *BooksTestSuite) SetupSuite() {
 	}
 
 	// Create handlers
-	suite.handler = NewBookHandler(suite.config)
-	suite.authHandler = NewAuthHandler(suite.config)
+	suite.handler = NewBookHandler(suite.db, suite.config)
+	suite.authHandler = NewAuthHandler(suite.db, suite.config)
 
 	// Setup Gin router
 	gin.SetMode(gin.TestMode)
@@ -83,7 +83,7 @@ func (suite *BooksTestSuite) SetupSuite() {
 func (suite *BooksTestSuite) SetupTest() {
 	// Clean up data before each test
 	cleanupTestData(suite.db)
-	
+
 	// Create test users and get tokens
 	suite.createTestUsers()
 }
@@ -105,19 +105,31 @@ func (suite *BooksTestSuite) createTestUsers() {
 	// Create admin user with proper password hash
 	hashedPassword := suite.hashPassword("password123")
 	adminUser := models.User{
-		Email:        "admin@test.com",
-		Name:         "Test Admin",
-		PasswordHash: hashedPassword,
-		Role:         "admin",
+		Email:         "admin@test.com",
+		Name:          "Test Admin",
+		PasswordHash:  hashedPassword,
+		Role:          "admin",
+		UserType:      "lecturer",
+		NIMNIDN:       utils.StringPtr("ADM001"),
+		Faculty:       utils.StringPtr("Fakultas Ilmu Komputer"),
+		DepartmentID:  utils.UintPtr(2),
+		EmailVerified: true,
+		IsApproved:    true,
 	}
 	suite.db.Create(&adminUser)
 
 	// Create regular user
 	regularUser := models.User{
-		Email:        "user@test.com",
-		Name:         "Test User",
-		PasswordHash: hashedPassword,
-		Role:         "user",
+		Email:         "user@test.com",
+		Name:          "Test User",
+		PasswordHash:  hashedPassword,
+		Role:          "user",
+		UserType:      "student",
+		NIMNIDN:       utils.StringPtr("USR001"),
+		Faculty:       utils.StringPtr("Fakultas Ilmu Komputer"),
+		DepartmentID:  utils.UintPtr(2),
+		EmailVerified: true,
+		IsApproved:    true,
 	}
 	suite.db.Create(&regularUser)
 
@@ -271,4 +283,4 @@ func (suite *BooksTestSuite) TestDeleteBook_Success() {
 
 func TestBooksTestSuite(t *testing.T) {
 	suite.Run(t, new(BooksTestSuite))
-} 
+}
