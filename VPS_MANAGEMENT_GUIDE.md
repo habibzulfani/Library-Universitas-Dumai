@@ -204,4 +204,45 @@ If you want to update your code but **keep your existing data** (no reseed):
 
 ---
 
+## 12. 🏗️ Installing the Correct Go Version (for CSV Import/Data Tasks)
+
+If you see errors like:
+```
+go: errors parsing go.mod:
+invalid go version '1.24.1': must match format 1.23
+unknown directive: toolchain
+```
+This means your server's Go version is too old for your app's requirements.
+
+### **How to install the latest Go version (manual, one-time setup):**
+
+1. Remove any old Go version:
+   ```sh
+   sudo apt remove --purge golang-go
+   sudo rm -rf /usr/local/go
+   ```
+2. Download the latest Go (e.g., 1.22.3):
+   ```sh
+   wget https://go.dev/dl/go1.22.3.linux-amd64.tar.gz
+   sudo tar -C /usr/local -xzf go1.22.3.linux-amd64.tar.gz
+   ```
+3. Add Go to your PATH (add to ~/.profile or ~/.bashrc):
+   ```sh
+   echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+   source ~/.profile
+   ```
+4. Verify:
+   ```sh
+   go version
+   # Should print go version go1.22.3 linux/amd64 (or newer)
+   ```
+
+**You only need to do this once per server.**
+
+### **Should you automate this in your deploy script?**
+- **Not recommended**: Downloading and extracting Go every deploy is slow and can break running apps if done at the wrong time.
+- **Best practice**: Install Go manually once, then redeploy as often as you like.
+
+---
+
 **For any issues, check the logs or contact your developer.** 
