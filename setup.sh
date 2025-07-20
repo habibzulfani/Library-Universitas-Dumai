@@ -31,6 +31,17 @@ export DB_USER=root
 export DB_PASSWORD=rootpassword
 export DB_NAME=e_repository_db
 
+# Set up Python 3 venv and install requirements for consistent dependency management
+if ! [ -d venv ]; then
+    /Users/habibzulfani/.pyenv/versions/3.8.10/bin/python -m venv venv
+fi
+source venv/bin/activate
+if [ -f requirements.txt ]; then
+    pip install -r requirements.txt
+fi
+PYTHON_CMD="venv/bin/python"
+export PYTHON_CMD
+
 # Function to print colored output
 print_status() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -504,22 +515,13 @@ main() {
     # Step 7: Check environment files
     print_status "Checking environment configuration..."
     
-    if [ ! -f "backend/.env" ]; then
-        if [ -f "backend/.env.example" ]; then
-            print_warning "Backend .env file not found, copying from .env.example"
-            cp backend/.env.example backend/.env
-        else
-            print_warning "Creating default backend .env file"
-            cat > backend/.env << EOF
-DB_HOST=e-repository-mysql
-DB_PORT=3306
-DB_NAME=e_repository_db
-DB_USER=root
-DB_PASSWORD=rootpassword
-JWT_SECRET=your_jwt_secret_key_here
-PORT=8080
-EOF
-        fi
+    # Load environment variables for local development
+    if [ -f "env.development" ]; then
+      print_status "Loading env.development for local Docker Compose"
+      cp env.development .env
+    else
+      print_error "env.development not found! Please create it before running this script."
+      exit 1
     fi
     
     print_success "Environment configuration ready"
@@ -552,6 +554,14 @@ EOF
         exit 1
     fi
 
+    # Step 9.5: Set log_bin_trust_function_creators=1 (required for function creation)
+    print_status "Setting log_bin_trust_function_creators=1 in MySQL..."
+    if docker exec e-repository-mysql mysql -u root -prootpassword -e "SET GLOBAL log_bin_trust_function_creators=1;"; then
+        print_success "log_bin_trust_function_creators set successfully"
+    else
+        print_warning "Failed to set log_bin_trust_function_creators (may require root user or MySQL not ready)"
+    fi
+
     # Step 10: Setup database
     if ! setup_database; then
         print_error "Database setup failed. Stopping all services..."
@@ -559,29 +569,28 @@ EOF
         exit 1
     fi
 
-    # Step 10.5: Import biblio CSV data
-    print_status "Importing biblio CSV data..."
-    if (cd backend && go run cmd/import_biblio/main.go); then
+    # Step 10.5: Import biblio CSV data (inside Docker using util-go service)
+    print_status "Importing biblio CSV data (inside Docker using util-go service)..."
+    if docker compose run --rm util-go go run cmd/import_biblio/main.go; then
         print_success "CSV data import completed successfully!"
     else
-        print_warning "CSV data import failed or Go is not installed. Skipping import."
+        print_warning "CSV data import failed or Go is not installed in the util-go container. Skipping import."
     fi
 
-    # Step 10.6: Generate missing cover images
+    # Step 10.6: Generate missing cover images (Python)
     print_status "Generating missing cover images (placeholder covers for missing files)..."
-    if [ -x /opt/homebrew/bin/python3.10 ]; then
-        PYTHON_CMD="/opt/homebrew/bin/python3.10"
+    if [ -f generate_covers.py ]; then
+        $PYTHON_CMD generate_covers.py db && print_success "Cover image generation completed successfully!" || print_warning "Failed to generate missing cover images. Please check Python and dependencies."
     else
-        PYTHON_CMD="python3"
+        print_warning "generate_covers.py not found. Skipping cover generation."
     fi
-    if ! $PYTHON_CMD -c "import PIL, mysql.connector" 2>/dev/null; then
-        print_status "Installing required Python packages (Pillow, mysql-connector-python)..."
-        $PYTHON_CMD -m pip install pillow mysql-connector-python
-    fi
-    if $PYTHON_CMD generate_covers.py db; then
-        print_success "Cover image generation completed successfully!"
+
+    # Step 10.7: Check uploads and clean up orphan files (inside Docker using util-node service)
+    print_status "Checking uploads and cleaning up orphan files (inside Docker using util-node service)..."
+    if docker compose run --rm util-node node check_uploads.js; then
+        print_success "Upload check and cleanup completed successfully!"
     else
-        print_warning "Failed to generate missing cover images. Please check Python and dependencies."
+        print_warning "Upload check failed. Please check Node.js and dependencies in the util-node container."
     fi
 
     # Step 11: Wait for API to be ready

@@ -97,6 +97,17 @@ else
     git pull
 fi
 
+# Step 8.5: Install Python 3, venv, and dependencies
+print_status "Installing Python 3 and venv..."
+sudo apt install -y python3 python3-pip python3-venv
+python3 -m venv venv
+source venv/bin/activate
+if [ -f requirements.txt ]; then
+    pip install -r requirements.txt
+fi
+PYTHON_CMD="venv/bin/python"
+export PYTHON_CMD
+
 # Step 9: Create production environment
 print_status "Setting up production environment..."
 if [ ! -f ".env" ]; then
@@ -106,6 +117,21 @@ if [ ! -f ".env" ]; then
 else
     print_warning ".env file already exists"
 fi
+
+# Step 9.5: Generate secure passwords and update .env
+print_status "Generating secure passwords..."
+MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32)
+MYSQL_PASSWORD=$(openssl rand -base64 32)
+JWT_SECRET=$(openssl rand -base64 64)
+
+sed -i "s/REPLACE_WITH_STRONG_ROOT_PASSWORD/$MYSQL_ROOT_PASSWORD/g" .env
+sed -i "s/REPLACE_WITH_STRONG_DB_PASSWORD/$MYSQL_PASSWORD/g" .env
+sed -i "s/REPLACE_WITH_VERY_SECURE_JWT_SECRET/$JWT_SECRET/g" .env
+
+# Optionally print the generated secrets for backup
+print_success "MySQL Root Password: $MYSQL_ROOT_PASSWORD"
+print_success "MySQL User Password: $MYSQL_PASSWORD"
+print_success "JWT Secret: $JWT_SECRET"
 
 # Step 10: Create Nginx configuration
 print_status "Setting up Nginx configuration..."
@@ -177,7 +203,27 @@ print_success "Firewall configured"
 # Step 12: Build and start application
 print_status "Building and starting application..."
 docker compose --env-file .env up -d --build
+# After bringing up Docker Compose services, install Python dependencies in util-python
+print_status "Installing Python dependencies in util-python container..."
+docker compose run --rm util-python pip install -r requirements.txt
 print_success "Application started"
+
+# Step 12.5: Import biblio CSV data (Go)
+print_status "Importing biblio CSV data..."
+if [ -f backend/cmd/import_biblio/main.go ]; then
+    (cd backend && go run cmd/import_biblio/main.go)
+    print_success "CSV data import completed successfully!"
+else
+    print_warning "CSV import script not found. Skipping."
+fi
+
+# Step 12.6: Generate missing cover images (Python)
+print_status "Generating missing cover images (placeholder covers for missing files)..."
+if [ -f generate_covers.py ]; then
+    $PYTHON_CMD generate_covers.py db && print_success "Cover image generation completed successfully!" || print_warning "Failed to generate missing cover images. Please check Python and dependencies."
+else
+    print_warning "generate_covers.py not found. Skipping cover generation."
+fi
 
 # Step 13: Wait for services to be ready
 print_status "Waiting for services to be ready..."

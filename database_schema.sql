@@ -11,10 +11,7 @@
 CREATE DATABASE IF NOT EXISTS e_repository_db;
 USE e_repository_db;
 
--- Create erepo_user and grant privileges (for Docker Compose integration)
-CREATE USER IF NOT EXISTS 'erepo_user'@'%' IDENTIFIED BY 'erepo_pass';
-GRANT ALL PRIVILEGES ON e_repository_db.* TO 'erepo_user'@'%';
-FLUSH PRIVILEGES;
+-- Removed user creation and grant statements (handled by Docker Compose)
 
 -- =====================================================
 -- USER MANAGEMENT TABLES

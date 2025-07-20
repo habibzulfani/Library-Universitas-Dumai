@@ -7,6 +7,8 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import mysql.connector
 from mysql.connector import Error
+from dotenv import load_dotenv
+load_dotenv()
 
 
 def create_cover_image(title, filename, width=400, height=600, bg_color=(52, 73, 94), text_color=(255, 255, 255)):
@@ -115,11 +117,11 @@ def main():
 def generate_missing_covers_from_db():
     """Generate placeholder covers for all missing cover images referenced in the DB, using the title as text."""
     db_config = {
-        'host': 'localhost',
-        'port': 3307,  # Docker MySQL port
-        'user': 'root',
-        'password': 'rootpassword',
-        'database': 'e_repository_db',
+        'host': os.getenv('DB_HOST', 'localhost'),
+        'port': int(os.getenv('DB_PORT', 3306)),
+        'user': os.getenv('DB_USER', 'root'),
+        'password': os.getenv('DB_PASSWORD', ''),
+        'database': os.getenv('DB_NAME', 'e_repository_db'),
     }
     covers_dir = "uploads/covers"
     os.makedirs(covers_dir, exist_ok=True)

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Database configuration
-DB_NAME="e_repository_db"  # More descriptive name
-DB_USER="root"
-DB_PASSWORD="rootpassword"
-DB_HOST="e-repository-mysql"
-DB_PORT="3306"
+# Database configuration (use env vars if set, otherwise defaults)
+DB_NAME="${DB_NAME:-e_repository_db}"
+DB_USER="${DB_USER:-root}"
+DB_PASSWORD="${DB_PASSWORD:-rootpassword}"
+DB_HOST="${DB_HOST:-e-repository-mysql}"
+DB_PORT="${DB_PORT:-3306}"
 
 # Colors for output
 GREEN='\033[0;32m'

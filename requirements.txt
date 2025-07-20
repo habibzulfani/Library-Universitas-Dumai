@@ -1,0 +1,4 @@
+python-dotenv
+Pillow
+mysql-connector-python
+# (add any other dependencies your Python scripts need)

@@ -1,3 +1,13 @@
+# =============================
+# E-Repository Docker Compose
+#
+# IMPORTANT:
+# - For local development: cp env.development .env
+# - For production:        cp env.production .env
+# - Or use: docker compose --env-file <file> up
+#
+# This file will fail to start if required env variables are missing.
+# =============================
 version: '3.8'
 
 services:
@@ -6,14 +16,16 @@ services:
     container_name: e-repository-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-e_repository_db}
-      MYSQL_USER: ${MYSQL_USER:-erepo_user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-erepo_pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?err}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?err}
+      MYSQL_USER: ${MYSQL_USER:?err}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?err}
+      LOG_BIN_TRUST_FUNCTION_CREATORS: 1
     ports:
-      - "${MYSQL_PORT:-3307}:3306"
+      - "${MYSQL_PORT:?err}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
     healthcheck:
       test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       timeout: 20s
@@ -24,15 +36,15 @@ services:
     container_name: e-repository-api
     restart: unless-stopped
     ports:
-      - "${API_PORT:-8080}:8080"
+      - "${API_PORT:?err}:8080"
     environment:
-      - DB_HOST=${DB_HOST:-mysql}
-      - DB_PORT=${DB_PORT:-3306}
-      - DB_USER=${DB_USER:-erepo_user}
-      - DB_PASSWORD=${DB_PASSWORD:-erepo_pass}
-      - DB_NAME=${DB_NAME:-e_repository_db}
-      - JWT_SECRET=${JWT_SECRET:-your-secret-key-here}
-      - JWT_EXPIRATION=${JWT_EXPIRATION:-24h}
+      - DB_HOST=${DB_HOST:?err}
+      - DB_PORT=${DB_PORT:?err}
+      - DB_USER=${DB_USER:?err}
+      - DB_PASSWORD=${DB_PASSWORD:?err}
+      - DB_NAME=${DB_NAME:?err}
+      - JWT_SECRET=${JWT_SECRET:?err}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:?err}
     volumes:
       - ./uploads:/app/uploads
     depends_on:
@@ -46,7 +58,7 @@ services:
     container_name: e-repository-pdf-service
     restart: unless-stopped
     ports:
-      - "${PDF_SERVICE_PORT:-8000}:8000"
+      - "${PDF_SERVICE_PORT:?err}:8000"
     volumes:
       - ./uploads:/app/uploads
     environment:
@@ -57,11 +69,70 @@ services:
     container_name: e-repository-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_PORT:?err}:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:?err}
     depends_on:
       - api
+
+  util:
+    image: node:20-bullseye
+    volumes:
+      - ./:/app
+    working_dir: /app
+    depends_on:
+      - mysql
+
+  util-go:
+    image: golang:1.24
+    volumes:
+      - ./:/app
+    working_dir: /app/backend
+    depends_on:
+      - mysql
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+
+  util-node:
+    image: node:20-bullseye
+    volumes:
+      - ./:/app
+    working_dir: /app
+    depends_on:
+      - mysql
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+
+  util-python:
+    image: python:3.11-bullseye
+    volumes:
+      - ./:/app
+    working_dir: /app
+    depends_on:
+      - mysql
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
 
 volumes:
   mysql_data:

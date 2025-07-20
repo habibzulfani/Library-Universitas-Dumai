@@ -55,7 +55,28 @@ type PaperAuthor struct {
 }
 
 func main() {
-	dsn := "root:rootpassword@tcp(127.0.0.1:3307)/e_repository_db?charset=utf8mb4&parseTime=True&loc=Local"
+	// Get DB connection info from environment variables, with sensible defaults
+	user := os.Getenv("DB_USER")
+	if user == "" {
+		user = "root"
+	}
+	password := os.Getenv("DB_PASSWORD")
+	if password == "" {
+		password = "rootpassword"
+	}
+	host := os.Getenv("DB_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := os.Getenv("DB_PORT")
+	if port == "" {
+		port = "3307"
+	}
+	dbname := os.Getenv("DB_NAME")
+	if dbname == "" {
+		dbname = "e_repository_db"
+	}
+	dsn := user + ":" + password + "@tcp(" + host + ":" + port + ")/" + dbname + "?charset=utf8mb4&parseTime=True&loc=Local"
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatal(err)

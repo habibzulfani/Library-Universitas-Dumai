@@ -61,6 +61,17 @@ print_status "Cloning repository..."
 git clone https://github.com/habibzulfani/Library-Universitas-Dumai.git .
 chmod +x setup.sh
 
+# Step 6.5: Install Python 3, venv, and dependencies
+print_status "Installing Python 3 and venv..."
+apt install -y python3 python3-pip python3-venv
+python3 -m venv venv
+source venv/bin/activate
+if [ -f requirements.txt ]; then
+    pip install -r requirements.txt
+fi
+PYTHON_CMD="venv/bin/python"
+export PYTHON_CMD
+
 # Step 7: Create production environment
 print_status "Setting up production environment..."
 cp env.production.template .env
@@ -82,6 +93,28 @@ docker compose up -d
 # Step 10: Wait for services to be ready
 print_status "Waiting for services to be ready..."
 sleep 30
+
+# Step 10.5: Seed the database
+print_status "Seeding the database with schema and sample data..."
+chmod +x backend/setup_database.sh
+./backend/setup_database.sh
+
+# Step 10.6: Import biblio CSV data (Go)
+print_status "Importing biblio CSV data..."
+if [ -f backend/cmd/import_biblio/main.go ]; then
+    (cd backend && go run cmd/import_biblio/main.go)
+    print_success "CSV data import completed successfully!"
+else
+    print_warning "CSV import script not found. Skipping."
+fi
+
+# Step 10.7: Generate missing cover images (Python)
+print_status "Generating missing cover images (placeholder covers for missing files)..."
+if [ -f generate_covers.py ]; then
+    $PYTHON_CMD generate_covers.py db && print_success "Cover image generation completed successfully!" || print_warning "Failed to generate missing cover images. Please check Python and dependencies."
+else
+    print_warning "generate_covers.py not found. Skipping cover generation."
+fi
 
 # Step 11: Check service status
 print_status "Checking service status..."

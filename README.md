@@ -2,6 +2,33 @@
 
 Aplikasi E-Repositori untuk Universitas Dumai yang memungkinkan mahasiswa dan dosen untuk mengunggah, mengelola, dan mengakses karya ilmiah dan buku-buku akademik.
 
+---
+
+## 🚀 VPS Deployment & Management (Production/Cloud)
+
+For production or cloud deployment (e.g., Hostinger VPS):
+
+- Use the automated script: `deploy-root.sh`
+- **Full step-by-step guide:** See [`VPS_MANAGEMENT_GUIDE.md`](./VPS_MANAGEMENT_GUIDE.md)
+- **Git workflow guide:** See [`GIT_COMMITS_GUIDE.md`](./GIT_COMMITS_GUIDE.md)
+
+### **Quick Workflow**
+1. Update your code locally
+2. Commit & push to GitHub
+3. SSH to your VPS and `cd /opt/erepository`
+4. `git pull` to get the latest code
+5. Run `./deploy-root.sh` to redeploy (this will reseed the database!)
+
+**To update code without reseeding the database:**
+```bash
+git pull
+docker compose up -d --build
+```
+
+> ⚠️ By default, `deploy-root.sh` will reseed (overwrite) your database every time you run it. For production, use the update-without-reseed method above if you want to preserve data.
+
+---
+
 ## Fitur Utama
 
 - Manajemen pengguna (mahasiswa, dosen, admin)

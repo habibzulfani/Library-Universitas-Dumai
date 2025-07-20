@@ -1,17 +1,26 @@
+require('dotenv').config();
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
 // === CONFIGURATION ===
-const DB_CONFIG = {
-    host: 'localhost',
-    port: 3307,             // Docker MySQL port
-    user: 'root',           // or your DB user
-    password: 'rootpassword', // or your DB password
-    database: 'e_repository_db',
-};
+// Allow DB host/port override via command-line arguments
+const argv = require('minimist')(process.argv.slice(2));
+let dbHost = argv.host || process.env.DB_HOST || 'localhost';
+let dbPort = argv.port ? parseInt(argv.port) : (process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 3306);
+const dbUser = process.env.DB_USER || 'root';
+const dbPassword = process.env.DB_PASSWORD || '';
+const dbName = process.env.DB_NAME || 'e_repository_db';
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+
+const DB_CONFIG = {
+    host: dbHost,
+    port: dbPort,
+    user: dbUser,
+    password: dbPassword,
+    database: dbName,
+};
 
 // === HELPER ===
 async function getFileAndCoverUrls(connection, table) {
@@ -43,7 +52,31 @@ function walkDir(dir, fileList = []) {
 
 // === MAIN ===
 (async () => {
-    const connection = await mysql.createConnection(DB_CONFIG);
+    let connection;
+    try {
+        // Try initial connection
+        connection = await mysql.createConnection(DB_CONFIG);
+    } catch (err) {
+        // If failed and using Docker Compose defaults, try localhost:3307 as fallback
+        if ((dbHost === 'mysql' || dbHost === '127.0.0.1' || dbHost === 'localhost') && dbPort === 3306) {
+            try {
+                console.warn('[WARN] Failed to connect to mysql:3306, trying localhost:3307...');
+                connection = await mysql.createConnection({
+                    host: 'localhost',
+                    port: 3307,
+                    user: dbUser,
+                    password: dbPassword,
+                    database: dbName,
+                });
+            } catch (err2) {
+                console.error('Error connecting to MySQL:', err2.message);
+                process.exit(1);
+            }
+        } else {
+            console.error('Error connecting to MySQL:', err.message);
+            process.exit(1);
+        }
+    }
 
     // 1. Get all file_urls and cover_image_urls from books and papers
     const bookFiles = await getFileAndCoverUrls(connection, 'books');
@@ -82,24 +115,6 @@ function walkDir(dir, fileList = []) {
             fs.unlinkSync(fullPath);
             console.log(`Deleted: ${f}`);
         });
-
-        // --- With prompt for safety ---
-        // const rl = readline.createInterface({
-        //     input: process.stdin,
-        //     output: process.stdout
-        // });
-        // rl.question('\nDelete all orphan files? (y/N): ', answer => {
-        //     if (answer.toLowerCase() === 'y') {
-        //         orphanFiles.forEach(f => {
-        //             const fullPath = path.join(UPLOADS_DIR, f);
-        //             fs.unlinkSync(fullPath);
-        //             console.log(`Deleted: ${f}`);
-        //         });
-        //     } else {
-        //         console.log('No files deleted.');
-        //     }
-        //     rl.close();
-        // });
     }
 
     await connection.end();
