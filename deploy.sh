@@ -100,7 +100,9 @@ fi
 # Step 8.5: Install Python 3, venv, and dependencies
 print_status "Installing Python 3 and venv..."
 sudo apt install -y python3 python3-pip python3-venv
-python3 -m venv venv
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+fi
 source venv/bin/activate
 if [ -f requirements.txt ]; then
     pip install -r requirements.txt
@@ -124,9 +126,9 @@ MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32)
 MYSQL_PASSWORD=$(openssl rand -base64 32)
 JWT_SECRET=$(openssl rand -base64 64)
 
-sed -i "s/REPLACE_WITH_STRONG_ROOT_PASSWORD/$MYSQL_ROOT_PASSWORD/g" .env
-sed -i "s/REPLACE_WITH_STRONG_DB_PASSWORD/$MYSQL_PASSWORD/g" .env
-sed -i "s/REPLACE_WITH_VERY_SECURE_JWT_SECRET/$JWT_SECRET/g" .env
+sed -i "s|REPLACE_WITH_STRONG_ROOT_PASSWORD|$MYSQL_ROOT_PASSWORD|g" .env
+sed -i "s|REPLACE_WITH_STRONG_DB_PASSWORD|$MYSQL_PASSWORD|g" .env
+sed -i "s|REPLACE_WITH_VERY_SECURE_JWT_SECRET|$JWT_SECRET|g" .env
 
 # Optionally print the generated secrets for backup
 print_success "MySQL Root Password: $MYSQL_ROOT_PASSWORD"
