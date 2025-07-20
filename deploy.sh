@@ -110,15 +110,14 @@ fi
 PYTHON_CMD="venv/bin/python"
 export PYTHON_CMD
 
-# Step 9: Create production environment
+# Step 9: Always overwrite .env from template
 print_status "Setting up production environment..."
-if [ ! -f ".env" ]; then
-    cp env.production .env
-    print_warning "Please edit .env file with your production settings"
-    print_warning "Run: nano .env"
-else
-    print_warning ".env file already exists"
+if [ -f ".env" ]; then
+    cp .env .env.backup.$(date +%Y%m%d%H%M%S)
+    print_warning "Backed up existing .env to .env.backup.$(date +%Y%m%d%H%M%S)"
 fi
+cp env.production .env
+print_success ".env updated from env.production"
 
 # Step 9.5: Generate secure passwords and update .env
 print_status "Generating secure passwords..."

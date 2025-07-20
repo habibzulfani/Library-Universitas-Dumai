@@ -79,9 +79,14 @@ fi
 PYTHON_CMD="venv/bin/python"
 export PYTHON_CMD
 
-# Step 7: Create production environment
+# Step 7: Always overwrite .env from template
 print_status "Setting up production environment..."
+if [ -f ".env" ]; then
+    cp .env .env.backup.$(date +%Y%m%d%H%M%S)
+    print_warning "Backed up existing .env to .env.backup.$(date +%Y%m%d%H%M%S)"
+fi
 cp env.production.template .env
+print_success ".env updated from env.production.template"
 
 # Step 8: Generate secure passwords
 print_status "Generating secure passwords..."
