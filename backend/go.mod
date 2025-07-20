@@ -1,8 +1,8 @@
 module e-repository-api
 
-go 1.24.1
+go 1.24
 
-// toolchain go1.24.3
+toolchain go1.24.5
 
 require (
 	github.com/gin-gonic/gin v1.10.1
