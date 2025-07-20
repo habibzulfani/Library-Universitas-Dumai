@@ -56,9 +56,14 @@ print_status "Creating application directory..."
 mkdir -p /opt/erepository
 cd /opt/erepository
 
-# Step 6: Clone repository
-print_status "Cloning repository..."
-git clone https://github.com/habibzulfani/Library-Universitas-Dumai.git .
+# Step 6: Clone or update repository
+if [ -d .git ]; then
+    print_status "Repository already exists, pulling latest changes..."
+    git pull
+else
+    print_status "Cloning repository..."
+    git clone https://github.com/habibzulfani/Library-Universitas-Dumai.git .
+fi
 chmod +x setup.sh
 
 # Step 6.5: Install Python 3, venv, and dependencies

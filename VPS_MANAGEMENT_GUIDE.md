@@ -20,7 +20,11 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
    ```bash
    git pull
    ```
-4. **Run the deployment script:**
+4. **Make the script file executable**
+   ```bash
+   chmod +x deploy-root.sh
+   ```
+5. **Run the deployment script:**
    ```bash
    ./deploy-root.sh
    ```
@@ -39,7 +43,11 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
    ```bash
    git pull
    ```
-3. **Restart the app with the latest code:**
+3. **Make the script file executable**
+   ```bash
+   chmod +x deploy-root.sh
+   ```
+4. **Restart the app with the latest code:**
    ```bash
    ./deploy-root.sh
    ```
