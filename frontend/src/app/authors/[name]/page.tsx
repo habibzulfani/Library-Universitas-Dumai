@@ -9,6 +9,7 @@ import { useToast } from '@/components/ui/use-toast';
 import Link from 'next/link';
 import React from 'react';
 import { Book, Paper, AuthorDetail } from '@/lib/api';
+import Pagination from '@/components/ui/Pagination';
 
 export default function AuthorDetailPage({
     params,
@@ -19,6 +20,15 @@ export default function AuthorDetailPage({
     const [isLoading, setIsLoading] = useState(true);
     const router = useRouter();
     const { toast } = useToast();
+
+    // Add pagination state for books and papers
+    const [booksPage, setBooksPage] = useState(1);
+    const [papersPage, setPapersPage] = useState(1);
+    const pageSize = 10;
+    const booksTotalPages = Math.ceil(author?.books.length || 0 / pageSize);
+    const papersTotalPages = Math.ceil(author?.papers.length || 0 / pageSize);
+    const paginatedBooks = author?.books.slice((booksPage - 1) * pageSize, booksPage * pageSize) || [];
+    const paginatedPapers = author?.papers.slice((papersPage - 1) * pageSize, papersPage * pageSize) || [];
 
     useEffect(() => {
         fetchAuthorDetail();
@@ -102,7 +112,7 @@ export default function AuthorDetailPage({
                     <div>
                         <h2 className="text-2xl font-semibold mb-4">Books</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {author.books.map((book) => (
+                            {paginatedBooks.map((book) => (
                                 <div key={book.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden">
                                     <div className="p-6">
                                         <h3 className="font-semibold text-lg mb-2 text-gray-900 line-clamp-2">
@@ -170,6 +180,16 @@ export default function AuthorDetailPage({
                                 </div>
                             ))}
                         </div>
+                        {/* Books Pagination */}
+                        {booksTotalPages > 1 && (
+                            <div className="mt-8 flex justify-center">
+                                <Pagination
+                                    currentPage={booksPage}
+                                    totalPages={booksTotalPages}
+                                    onPageChange={setBooksPage}
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -177,7 +197,7 @@ export default function AuthorDetailPage({
                     <div>
                         <h2 className="text-2xl font-semibold mb-4">Papers</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {author.papers.map((paper) => (
+                            {paginatedPapers.map((paper) => (
                                 <div key={paper.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden">
                                     <div className="p-6">
                                         <h3 className="font-semibold text-lg mb-2 text-gray-900 line-clamp-2">
@@ -247,6 +267,16 @@ export default function AuthorDetailPage({
                                 </div>
                             ))}
                         </div>
+                        {/* Papers Pagination */}
+                        {papersTotalPages > 1 && (
+                            <div className="mt-8 flex justify-center">
+                                <Pagination
+                                    currentPage={papersPage}
+                                    totalPages={papersTotalPages}
+                                    onPageChange={setPapersPage}
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

@@ -29,7 +29,7 @@ export function BookList({ books, loading, onEdit, onDelete, onAdd }: BookListPr
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {books.map((book) => (
+                {(books || []).map((book) => (
                     <div key={book.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden">
                         <div className="p-6">
                             <h3 className="font-semibold text-lg mb-2 text-gray-900 line-clamp-2">

@@ -2,8 +2,9 @@
 
 import { AuthProvider } from '@/contexts/AuthContext';
 import Navbar from '@/components/layout/Navbar';
+import Footer from '@/components/layout/Footer';
 import { Toaster } from "@/components/ui/toaster";
-import { ChakraProvider } from '@chakra-ui/react';
+import { ChakraProvider, Box } from '@chakra-ui/react';
 
 export default function ClientLayout({
     children,
@@ -13,11 +14,14 @@ export default function ClientLayout({
     return (
         <ChakraProvider>
             <AuthProvider>
-                <Navbar />
-                <main>
-                    {children}
-                </main>
-                <Toaster />
+                <Box minH="100vh" display="flex" flexDirection="column">
+                    <Navbar />
+                    <main style={{ flex: 1 }}>
+                        {children}
+                    </main>
+                    <Footer />
+                    <Toaster />
+                </Box>
             </AuthProvider>
         </ChakraProvider>
     );

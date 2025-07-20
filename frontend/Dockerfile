@@ -1,6 +1,5 @@
 # Dependencies
-FROM node:20-alpine AS deps
-RUN apk add --no-cache libc6-compat
+FROM node:20-alpine3.18 AS deps
 WORKDIR /app
 
 # Set npm config to handle network issues
@@ -18,7 +17,7 @@ RUN --mount=type=cache,target=/root/.npm \
     (npm cache clean --force && npm ci --prefer-offline --no-audit)
 
 # Builder
-FROM node:18-alpine AS builder
+FROM node:20-alpine3.18 AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -28,7 +27,7 @@ ENV NEXT_FORCE_SWCPACKAGE=1
 RUN npm run build
 
 # Runner
-FROM node:18-alpine AS runner
+FROM node:20-alpine3.18 AS runner
 WORKDIR /app
 
 ENV NODE_ENV production

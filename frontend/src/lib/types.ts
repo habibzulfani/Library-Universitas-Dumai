@@ -37,6 +37,7 @@ export interface Paper {
     department?: string;
     year?: number;
     issn?: string;
+    language?: string;
     journal?: string;
     volume?: number;
     issue?: number;

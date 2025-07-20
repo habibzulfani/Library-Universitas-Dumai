@@ -8,6 +8,9 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import BookForm from '@/components/forms/BookForm';
+import PaperForm from '@/components/forms/PaperForm';
+import Pagination from '@/components/ui/Pagination';
 
 function SearchResults() {
     const searchParams = useSearchParams();
@@ -21,32 +24,48 @@ function SearchResults() {
     const [showDeletePaperConfirm, setShowDeletePaperConfirm] = useState<{ id: number; title: string } | null>(null);
     const [isDeletingBook, setIsDeletingBook] = useState(false);
     const [isDeletingPaper, setIsDeletingPaper] = useState(false);
+    const [editingBook, setEditingBook] = useState<Book | null>(null);
+    const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
+    const [showBookForm, setShowBookForm] = useState(false);
+    const [showPaperForm, setShowPaperForm] = useState(false);
+    // Add pagination state for books and papers
+    const [booksPage, setBooksPage] = useState(1);
+    const [papersPage, setPapersPage] = useState(1);
+    const pageSize = 10;
+    const booksTotalPages = Math.ceil(books.length / pageSize);
+    const papersTotalPages = Math.ceil(papers.length / pageSize);
+    const paginatedBooks = books.slice((booksPage - 1) * pageSize, booksPage * pageSize);
+    const paginatedPapers = papers.slice((papersPage - 1) * pageSize, papersPage * pageSize);
+
+    const fetchResults = async () => {
+        if (!query) return;
+        setLoading(true);
+        try {
+            const [booksResponse, papersResponse] = await Promise.all([
+                booksAPI.search({ query }),
+                papersAPI.search({ query })
+            ]);
+            setBooks(booksResponse.data.data);
+            setPapers(papersResponse.data.data);
+        } catch {
+            toast.error('Failed to fetch search results');
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchResults = async () => {
-            if (!query) return;
-
-            setLoading(true);
-            try {
-                const [booksResponse, papersResponse] = await Promise.all([
-                    booksAPI.search({ query }),
-                    papersAPI.search({ query })
-                ]);
-                setBooks(booksResponse.data.data);
-                setPapers(papersResponse.data.data);
-            } catch {
-                toast.error('Failed to fetch search results');
-            } finally {
-                setLoading(false);
-            }
-        };
-
         fetchResults();
     }, [query]);
 
-    const handleEditBook = () => {
-        // TODO: Implement edit functionality
-        toast.error('Edit functionality not implemented yet');
+    const handleEditBook = async (book: Book) => {
+        try {
+            const response = await booksAPI.getBook(book.id);
+            setEditingBook(response);
+            setShowBookForm(true);
+        } catch (error) {
+            toast.error('Failed to load book details');
+        }
     };
 
     const handleDeleteBook = async (id: number) => {
@@ -72,9 +91,14 @@ function SearchResults() {
         }
     };
 
-    const handleEditPaper = () => {
-        // TODO: Implement edit functionality
-        toast.error('Edit functionality not implemented yet');
+    const handleEditPaper = async (paper: Paper) => {
+        try {
+            const response = await papersAPI.getPaper(paper.id);
+            setEditingPaper(response);
+            setShowPaperForm(true);
+        } catch (error) {
+            toast.error('Failed to load paper details');
+        }
     };
 
     const handleDeletePaper = async (id: number) => {
@@ -153,7 +177,7 @@ function SearchResults() {
                     <div>
                         <h2 className="text-2xl font-bold mb-4">Books</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {books.map((book) => (
+                            {paginatedBooks.map((book) => (
                                 <div
                                     key={book.id}
                                     className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden"
@@ -223,7 +247,7 @@ function SearchResults() {
                                             {user?.role === 'admin' && (
                                                 <div className="flex space-x-2">
                                                     <button
-                                                        onClick={() => handleEditBook()}
+                                                        onClick={() => handleEditBook(book)}
                                                         className="p-2 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
                                                         title="Edit book"
                                                     >
@@ -243,6 +267,16 @@ function SearchResults() {
                                 </div>
                             ))}
                         </div>
+                        {/* Books Pagination */}
+                        {booksTotalPages > 1 && (
+                            <div className="mt-8 flex justify-center">
+                                <Pagination
+                                    currentPage={booksPage}
+                                    totalPages={booksTotalPages}
+                                    onPageChange={setBooksPage}
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -250,7 +284,7 @@ function SearchResults() {
                     <div>
                         <h2 className="text-2xl font-bold mb-4">Papers</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {papers.map((paper) => (
+                            {paginatedPapers.map((paper) => (
                                 <div
                                     key={paper.id}
                                     className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden"
@@ -322,7 +356,7 @@ function SearchResults() {
                                             {user?.role === 'admin' && (
                                                 <div className="flex space-x-2">
                                                     <button
-                                                        onClick={() => handleEditPaper()}
+                                                        onClick={() => handleEditPaper(paper)}
                                                         className="p-2 text-[#38b36c] hover:text-[#2e8c55] hover:bg-[#e6f4ec] rounded-lg transition-colors duration-200"
                                                         title="Edit paper"
                                                     >
@@ -342,6 +376,16 @@ function SearchResults() {
                                 </div>
                             ))}
                         </div>
+                        {/* Papers Pagination */}
+                        {papersTotalPages > 1 && (
+                            <div className="mt-8 flex justify-center">
+                                <Pagination
+                                    currentPage={papersPage}
+                                    totalPages={papersTotalPages}
+                                    onPageChange={setPapersPage}
+                                />
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -377,6 +421,25 @@ function SearchResults() {
                 type="danger"
                 isLoading={isDeletingPaper}
             />
+
+            {/* Book Edit Modal */}
+            {showBookForm && (
+                <BookForm
+                    editingBook={editingBook}
+                    onClose={() => { setShowBookForm(false); setEditingBook(null); }}
+                    onSuccess={() => { setShowBookForm(false); setEditingBook(null); fetchResults(); }}
+                    isAdmin={user?.role === 'admin'}
+                />
+            )}
+            {/* Paper Edit Modal */}
+            {showPaperForm && (
+                <PaperForm
+                    editingPaper={editingPaper}
+                    onClose={() => { setShowPaperForm(false); setEditingPaper(null); }}
+                    onSuccess={() => { setShowPaperForm(false); setEditingPaper(null); fetchResults(); }}
+                    isAdmin={user?.role === 'admin'}
+                />
+            )}
         </div>
     );
 }

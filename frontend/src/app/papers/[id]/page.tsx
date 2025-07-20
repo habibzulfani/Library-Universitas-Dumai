@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { api, papersAPI } from '@/lib/api';
+import { toast } from 'react-hot-toast';
 import {
   DocumentTextIcon,
   CalendarIcon,
@@ -48,6 +49,7 @@ interface Paper {
     description?: string;
     type: string;
   }>;
+  language?: string;
 }
 
 export default function PaperDetailPage() {
@@ -61,8 +63,12 @@ export default function PaperDetailPage() {
   const [showCitationModal, setShowCitationModal] = useState(false);
   const [citationFormat, setCitationFormat] = useState<'apa' | 'mla' | 'chicago'>('apa');
   const [citation, setCitation] = useState('');
+  // Add state for creator info
+  const [creator, setCreator] = useState<any>(null);
+  const [citationCount, setCitationCount] = useState<number>(0);
 
   const paperId = params?.id as string;
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
   useEffect(() => {
     const fetchPaper = async () => {
@@ -83,44 +89,84 @@ export default function PaperDetailPage() {
     fetchPaper();
   }, [paperId]);
 
+  useEffect(() => {
+    if (paper && paper.created_by) {
+      // Fetch user info for creator
+      fetch(`${API_BASE_URL}/api/v1/users/${paper.created_by}`)
+        .then(res => res.json())
+        .then(data => setCreator(data))
+        .catch(() => setCreator(null));
+    }
+  }, [paper]);
+
+  useEffect(() => {
+    if (paper) {
+      // Fetch citation count
+      fetch(`${API_BASE_URL}/api/v1/papers/${paper.id}`)
+        .then(res => res.json())
+        .then(data => setCitationCount(data.citation_count || 0))
+        .catch(() => setCitationCount(0));
+    }
+  }, [paper]);
+
   const handleDownload = async () => {
-    if (!paper?.file_url || !isAuthenticated) return;
+    if (!paper?.file_url) return;
 
     setIsDownloading(true);
     try {
-      await papersAPI.downloadPaper(paper.id, paper.title, paper.file_url);
+      await papersAPI.downloadPaperPublic(paper.id, paper.title, paper.file_url);
+      toast.success('Paper downloaded successfully!');
     } catch (err) {
       console.error('Download failed:', err);
+      toast.error('Failed to download paper');
     } finally {
       setIsDownloading(false);
     }
   };
 
-  const handleCite = () => {
+  const handleCite = async () => {
     if (!paper) return;
-    const citation = generatePaperCitation({
-      title: paper.title,
-      author: paper.author,
-      year: paper.year || new Date().getFullYear(),
-      university: paper.university,
-      department: paper.department,
-      issn: paper.issn,
-      journal: paper.journal,
-      volume: paper.volume,
-      issue: paper.issue,
-      pages: paper.pages,
-      doi: paper.doi
-    }, citationFormat);
-    setCitation(citation);
-    setShowCitationModal(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/papers/${paper.id}/cite`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!res.ok) {
+        toast.error('Failed to log citation.');
+        return;
+      }
+      setCitationCount(citationCount + 1);
+      const citation = generatePaperCitation({
+        title: paper.title,
+        authors: paper.authors ? paper.authors : undefined,
+        author: paper.author,
+        year: paper.year || new Date().getFullYear(),
+        university: paper.university,
+        department: paper.department,
+        issn: paper.issn,
+        journal: paper.journal,
+        volume: paper.volume,
+        issue: paper.issue,
+        pages: paper.pages,
+        doi: paper.doi
+      }, citationFormat);
+      setCitation(citation);
+      setShowCitationModal(true);
+      toast.success('Citation generated successfully!');
+    } catch (err) {
+      toast.error('Network error while citing.');
+    }
   };
 
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(citation);
-      alert('Citation copied to clipboard!');
+      toast.success('Citation copied to clipboard!');
     } catch (err) {
       console.error('Failed to copy citation:', err);
+      toast.error('Failed to copy citation');
     }
   };
 
@@ -236,7 +282,7 @@ export default function PaperDetailPage() {
 
                 {/* Download and Cite Buttons */}
                 <div className="flex space-x-4">
-                  {isAuthenticated && paper.file_url && (
+                  {paper.file_url && (
                     <button
                       onClick={handleDownload}
                       disabled={isDownloading}
@@ -246,25 +292,14 @@ export default function PaperDetailPage() {
                       {isDownloading ? 'Downloading...' : 'Download Paper'}
                     </button>
                   )}
-
-                  {isAuthenticated && (
-                    <button
-                      onClick={handleCite}
-                      className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#4cae8a]"
-                    >
-                      <ClipboardDocumentIcon className="h-4 w-4 mr-2" />
-                      Cite
-                    </button>
-                  )}
+                  <button
+                    onClick={handleCite}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#4cae8a]"
+                  >
+                    <ClipboardDocumentIcon className="h-4 w-4 mr-2" />
+                    Cite
+                  </button>
                 </div>
-
-                {!isAuthenticated && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-                    <p className="text-sm text-yellow-800">
-                      Please <span className="font-medium">sign in</span> to download or cite this paper.
-                    </p>
-                  </div>
-                )}
 
                 {/* Citation Modal */}
                 {showCitationModal && (
@@ -377,6 +412,12 @@ export default function PaperDetailPage() {
                         <dd className="mt-1 text-sm text-gray-900">{paper.issn}</dd>
                       </div>
                     )}
+                    {paper.language && (
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Language</dt>
+                        <dd className="mt-1 text-sm text-gray-900">{paper.language}</dd>
+                      </div>
+                    )}
                   </dl>
                 </div>
 
@@ -452,6 +493,16 @@ export default function PaperDetailPage() {
                     </p>
                   )}
                 </div>
+                {paper.created_by && (
+                  <div className="mt-4 text-sm text-gray-600">
+                    <span className="font-medium">Created by: </span>
+                    {creator && creator.name ? (
+                      <Link href={`/users/${creator.id}`} className="text-[#4cae8a] hover:underline">{creator.name}</Link>
+                    ) : (
+                      <span>Unknown</span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

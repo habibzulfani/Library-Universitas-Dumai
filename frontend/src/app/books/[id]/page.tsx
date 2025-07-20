@@ -31,7 +31,7 @@ interface Book {
   isbn?: string;
   subject?: string;
   language?: string;
-  pages?: number;
+  pages?: string;
   summary?: string;
   file_url?: string;
   cover_image_url?: string;
@@ -57,8 +57,12 @@ export default function BookDetailPage() {
   const [showCitationModal, setShowCitationModal] = useState(false);
   const [citationFormat, setCitationFormat] = useState<'apa' | 'mla' | 'chicago'>('apa');
   const [citation, setCitation] = useState('');
+  // Add state for creator info
+  const [creator, setCreator] = useState<any>(null);
+  const [citationCount, setCitationCount] = useState<number>(0);
 
   const bookId = params?.id as string;
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
   useEffect(() => {
     const fetchBook = async () => {
@@ -80,45 +84,33 @@ export default function BookDetailPage() {
     fetchBook();
   }, [bookId]);
 
+  useEffect(() => {
+    if (book && book.created_by) {
+      // Fetch user info for creator
+      fetch(`${API_BASE_URL}/api/v1/users/${book.created_by}`)
+        .then(res => res.json())
+        .then(data => setCreator(data))
+        .catch(() => setCreator(null));
+    }
+  }, [book]);
+
+  useEffect(() => {
+    if (book) {
+      // Fetch citation count
+      fetch(`${API_BASE_URL}/api/v1/books/${book.id}`)
+        .then(res => res.json())
+        .then(data => setCitationCount(data.citation_count || 0))
+        .catch(() => setCitationCount(0));
+    }
+  }, [book]);
+
   const handleDownload = async () => {
-    if (!book?.file_url || !isAuthenticated) return;
+    if (!book?.file_url) return;
 
     setIsDownloading(true);
     try {
-      const response = await api.get(`/user/books/${book.id}/download`, {
-        responseType: 'blob',
-      });
-
-      // Create blob link to download
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-
-      // Try to get filename from Content-Disposition header first
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = book.title;
-
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      } else {
-        // Fallback: extract extension from file_url if available
-        if (book.file_url) {
-          const extension = book.file_url.split('.').pop();
-          filename = extension ? `${book.title}.${extension}` : book.title;
-        } else {
-          // Last resort fallback
-          filename = `${book.title}.pdf`;
-        }
-      }
-
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await booksAPI.downloadBookPublic(book.id, book.title, book.file_url);
+      toast.success('Book downloaded successfully!');
     } catch (err) {
       console.error('Download failed:', err);
       toast.error('Failed to download book');
@@ -127,19 +119,43 @@ export default function BookDetailPage() {
     }
   };
 
-  const handleCite = () => {
+  const handleCite = async () => {
     if (!book) return;
-    const citation = generateBookCitation(book, citationFormat);
-    setCitation(citation);
-    setShowCitationModal(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/books/${book.id}/cite`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!res.ok) {
+        toast.error('Failed to log citation.');
+        return;
+      }
+      setCitationCount(citationCount + 1);
+      const citation = generateBookCitation({
+        title: book.title,
+        authors: book.authors ? book.authors : undefined,
+        author: book.author,
+        published_year: book.published_year,
+        publisher: book.publisher,
+        isbn: book.isbn,
+      }, citationFormat);
+      setCitation(citation);
+      setShowCitationModal(true);
+      toast.success('Citation generated successfully!');
+    } catch (err) {
+      toast.error('Network error while citing.');
+    }
   };
 
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(citation);
-      alert('Citation copied to clipboard!');
+      toast.success('Citation copied to clipboard!');
     } catch (err) {
       console.error('Failed to copy citation:', err);
+      toast.error('Failed to copy citation');
     }
   };
 
@@ -255,7 +271,7 @@ export default function BookDetailPage() {
 
                 {/* Download and Cite Buttons */}
                 <div className="flex space-x-4">
-                  {isAuthenticated && book.file_url && (
+                  {book.file_url && (
                     <button
                       onClick={handleDownload}
                       disabled={isDownloading}
@@ -265,25 +281,14 @@ export default function BookDetailPage() {
                       {isDownloading ? 'Downloading...' : 'Download Book'}
                     </button>
                   )}
-
-                  {isAuthenticated && (
-                    <button
-                      onClick={handleCite}
-                      className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#4cae8a]"
-                    >
-                      <ClipboardDocumentIcon className="h-4 w-4 mr-2" />
-                      Cite
-                    </button>
-                  )}
+                  <button
+                    onClick={handleCite}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#4cae8a]"
+                  >
+                    <ClipboardDocumentIcon className="h-4 w-4 mr-2" />
+                    Cite
+                  </button>
                 </div>
-
-                {!isAuthenticated && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-                    <p className="text-sm text-yellow-800">
-                      Please <span className="font-medium">sign in</span> to download or cite this book.
-                    </p>
-                  </div>
-                )}
 
                 {/* Citation Modal */}
                 {showCitationModal && (
@@ -296,7 +301,14 @@ export default function BookDetailPage() {
                           onChange={(e) => {
                             setCitationFormat(e.target.value as 'apa' | 'mla' | 'chicago');
                             if (book) {
-                              setCitation(generateBookCitation(book, e.target.value as 'apa' | 'mla' | 'chicago'));
+                              setCitation(generateBookCitation({
+                                title: book.title,
+                                authors: book.authors ? book.authors : undefined,
+                                author: book.author,
+                                published_year: book.published_year,
+                                publisher: book.publisher,
+                                isbn: book.isbn,
+                              }, e.target.value as 'apa' | 'mla' | 'chicago'));
                             }
                           }}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4cae8a]"
@@ -429,6 +441,16 @@ export default function BookDetailPage() {
                     </p>
                   )}
                 </div>
+                {book.created_by && (
+                  <div className="mt-4 text-sm text-gray-600">
+                    <span className="font-medium">Created by: </span>
+                    {creator && creator.name ? (
+                      <Link href={`/users/${creator.id}`} className="text-[#4cae8a] hover:underline">{creator.name}</Link>
+                    ) : (
+                      <span>Unknown</span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { MagnifyingGlassIcon, UserIcon, BookOpenIcon, DocumentTextIcon, Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline';
 import Image from 'next/image';
 import { toast } from 'react-hot-toast';
+import { getFullUrl } from '@/lib/api';
 
 interface NavLinkProps {
   href: string;
@@ -90,7 +91,7 @@ const Navbar: React.FC = () => {
                 />
               </div>
               <span className="ml-2 text-xl font-bold text-[#009846] group-hover:text-[#007a36] transition-colors duration-200">
-                Universitas Dumai Library
+                Universitas Dumai Repository
               </span>
             </Link>
 
@@ -113,7 +114,7 @@ const Navbar: React.FC = () => {
               </div>
               <input
                 type="search"
-                placeholder="Search for books, papers, authors, ISBN, ISSN, or year..."
+                placeholder="Search for books, papers, authors, ISBN, ISSN, DOI, or year..."
                 className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-[#009846] focus:border-[#009846] transition-all duration-200 hover:border-[#009846]"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
@@ -148,7 +149,7 @@ const Navbar: React.FC = () => {
                     <div className="h-8 w-8 rounded-full bg-[#009846] flex items-center justify-center shadow-sm overflow-hidden">
                       {user?.profile_picture_url ? (
                         <Image
-                          src={user.profile_picture_url}
+                          src={getFullUrl(user.profile_picture_url) || ''}
                           alt={user.name}
                           width={32}
                           height={32}
@@ -239,7 +240,7 @@ const Navbar: React.FC = () => {
                 </div>
                 <input
                   type="search"
-                  placeholder="Search for books, papers, authors, ISBN, ISSN, or year..."
+                  placeholder="Search for books, papers, authors, ISBN, ISSN, DOI, or year..."
                   className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-[#009846] focus:border-[#009846] transition-all duration-200 hover:border-[#009846]"
                   value={mobileSearchQuery}
                   onChange={e => setMobileSearchQuery(e.target.value)}
@@ -256,7 +257,7 @@ const Navbar: React.FC = () => {
                       <div className="h-8 w-8 rounded-full bg-[#009846] flex items-center justify-center shadow-sm overflow-hidden">
                         {user?.profile_picture_url ? (
                           <Image
-                            src={user.profile_picture_url}
+                            src={getFullUrl(user.profile_picture_url) || ''}
                             alt={user.name}
                             width={32}
                             height={32}

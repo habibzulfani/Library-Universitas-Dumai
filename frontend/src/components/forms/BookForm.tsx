@@ -1,6 +1,7 @@
-import { XMarkIcon, PlusIcon, XCircleIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, PlusIcon, XCircleIcon, SparklesIcon } from '@heroicons/react/24/outline';
 import { useBookForm } from '@/hooks/useBookForm';
 import { Book } from '@/lib/api';
+import MetadataExtractor from './MetadataExtractor';
 
 interface BookFormProps {
     editingBook?: Book | null;
@@ -35,6 +36,23 @@ export default function BookForm({
         isAdmin,
     });
 
+    const handleMetadataExtracted = (metadata: any, file?: File) => {
+        setBookFormData(prev => ({
+            ...prev,
+            title: metadata.title || "",
+            publisher: metadata.publisher || "",
+            published_year: metadata.year ? String(metadata.year) : "",
+            isbn: metadata.isbn || "",
+            subject: metadata.subject || "",
+            language: metadata.language || "",
+            pages: metadata.pages || "",
+            summary: metadata.abstract || metadata.summary || "",
+            authors: Array.isArray(metadata.authors) ? metadata.authors : [],
+            author: Array.isArray(metadata.authors) && metadata.authors.length > 0 ? metadata.authors[0] : "",
+            file: file || prev.file,
+        }));
+    };
+
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         setBookFormData({ ...bookFormData, [name]: value });
@@ -42,9 +60,7 @@ export default function BookForm({
 
     const handleFormSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (bookFormData.author.trim() && !bookFormData.authors.includes(bookFormData.author.trim())) {
-            handleAddAuthor();
-        }
+        // Don't automatically add author from input field - user must click Add button
         handleBookSubmit(e);
     };
 
@@ -58,6 +74,18 @@ export default function BookForm({
                     </button>
                 </div>
                 <form onSubmit={handleFormSubmit} className="space-y-6">
+                    {/* Metadata Extractor */}
+                    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="flex items-center gap-2 mb-3">
+                            <SparklesIcon className="h-5 w-5 text-blue-500" />
+                            <h3 className="text-lg font-medium text-gray-900">Auto-fill with AI</h3>
+                        </div>
+                        <MetadataExtractor
+                            onMetadataExtracted={handleMetadataExtracted}
+                            disabled={isSubmitting}
+                        />
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -84,7 +112,7 @@ export default function BookForm({
                                     value={bookFormData.author}
                                     onChange={handleChange}
                                     onKeyDown={handleKeyPress}
-                                    placeholder="Add author name"
+                                    placeholder="Type author name and click Add"
                                 />
                                 <button
                                     type="button"
@@ -188,13 +216,12 @@ export default function BookForm({
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Pages</label>
                             <input
-                                type="number"
+                                type="text"
                                 name="pages"
-                                min="1"
-                                max="10000"
                                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[#4cae8a] focus:border-[#4cae8a]"
                                 value={bookFormData.pages}
                                 onChange={handleChange}
+                                placeholder="e.g., 300, xii + 300 hlm.; 21 cm"
                             />
                         </div>
                     </div>

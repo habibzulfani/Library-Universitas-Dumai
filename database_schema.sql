@@ -11,6 +11,11 @@
 CREATE DATABASE IF NOT EXISTS e_repository_db;
 USE e_repository_db;
 
+-- Create erepo_user and grant privileges (for Docker Compose integration)
+CREATE USER IF NOT EXISTS 'erepo_user'@'%' IDENTIFIED BY 'erepo_pass';
+GRANT ALL PRIVILEGES ON e_repository_db.* TO 'erepo_user'@'%';
+FLUSH PRIVILEGES;
+
 -- =====================================================
 -- USER MANAGEMENT TABLES
 -- =====================================================
@@ -64,6 +69,16 @@ CREATE TABLE IF NOT EXISTS users (
     FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB;
 
+-- Password reset tokens table - For password reset functionality
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    token VARCHAR(255) NOT NULL UNIQUE,
+    expires_at DATETIME(3) NOT NULL,
+    created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 -- Insert default admin user
 -- Password: admin123 (should be changed on first login)
 INSERT INTO users (
@@ -104,6 +119,7 @@ CREATE TABLE IF NOT EXISTS papers (
     department VARCHAR(255),
     year INT,
     issn VARCHAR(191),
+    language VARCHAR(100) DEFAULT 'English',
     journal VARCHAR(255),
     volume INT,
     issue INT,
@@ -134,7 +150,7 @@ CREATE TABLE IF NOT EXISTS books (
     isbn VARCHAR(50),
     subject VARCHAR(255),
     language VARCHAR(100) DEFAULT 'English',
-    pages INT,
+    pages VARCHAR(50),
     summary TEXT,
     file_url VARCHAR(500),
     cover_image_url VARCHAR(500),
@@ -308,6 +324,20 @@ CREATE TABLE IF NOT EXISTS downloads (
     INDEX idx_downloaded_at (downloaded_at)
 ) ENGINE=InnoDB;
 
+-- Citation statistics
+CREATE TABLE IF NOT EXISTS citations (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED,
+    item_id BIGINT UNSIGNED NOT NULL,
+    item_type ENUM('book', 'paper') NOT NULL,
+    cited_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+    
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_user_id (user_id),
+    INDEX idx_item (item_id, item_type),
+    INDEX idx_cited_at (cited_at)
+) ENGINE=InnoDB;
+
 -- =====================================================
 -- STORED PROCEDURES AND FUNCTIONS
 -- =====================================================
@@ -366,6 +396,35 @@ BEGIN
     RETURN download_count;
 END //
 
+-- Procedure to log citation activity
+CREATE PROCEDURE LogCitation(
+    IN p_user_id INT,
+    IN p_item_id INT,
+    IN p_item_type ENUM('book', 'paper')
+)
+BEGIN
+    -- Insert citation record
+    INSERT INTO citations (user_id, item_id, item_type)
+    VALUES (p_user_id, p_item_id, p_item_type);
+    -- Insert activity log
+    INSERT INTO activity_logs (user_id, action, item_id, item_type)
+    VALUES (p_user_id, 'cite', p_item_id, p_item_type);
+    -- Increment citation counter
+    CALL IncrementCounter('total_citations');
+END //
+
+-- Function to get item's total citation count
+CREATE FUNCTION GetItemCitationCount(p_item_id INT, p_item_type ENUM('book', 'paper')) RETURNS INT
+READS SQL DATA
+DETERMINISTIC
+BEGIN
+    DECLARE citation_count INT DEFAULT 0;
+    SELECT COUNT(*) INTO citation_count 
+    FROM citations 
+    WHERE item_id = p_item_id AND item_type = p_item_type;
+    RETURN citation_count;
+END //
+
 DELIMITER ;
 
 -- =====================================================
@@ -385,30 +444,34 @@ CREATE INDEX idx_papers_department ON papers(department);
 -- VIEWS FOR COMMON QUERIES
 -- =====================================================
 
--- View for book statistics
-CREATE VIEW book_stats AS
+-- View for book statistics (add citation_count)
+CREATE OR REPLACE VIEW book_stats AS
 SELECT 
     b.id,
     b.title,
     b.author,
     COUNT(DISTINCT ub.user_id) as favorite_count,
-    COUNT(DISTINCT d.id) as download_count
+    COUNT(DISTINCT d.id) as download_count,
+    COUNT(DISTINCT c.id) as citation_count
 FROM books b
 LEFT JOIN user_books ub ON b.id = ub.book_id
 LEFT JOIN downloads d ON b.id = d.item_id AND d.item_type = 'book'
+LEFT JOIN citations c ON b.id = c.item_id AND c.item_type = 'book'
 GROUP BY b.id, b.title, b.author;
 
--- View for paper statistics  
-CREATE VIEW paper_stats AS
+-- View for paper statistics (add citation_count)
+CREATE OR REPLACE VIEW paper_stats AS
 SELECT 
     p.id,
     p.title,
     p.author,
     COUNT(DISTINCT up.user_id) as favorite_count,
-    COUNT(DISTINCT d.id) as download_count
+    COUNT(DISTINCT d.id) as download_count,
+    COUNT(DISTINCT c.id) as citation_count
 FROM papers p
 LEFT JOIN user_papers up ON p.id = up.paper_id
 LEFT JOIN downloads d ON p.id = d.item_id AND d.item_type = 'paper'
+LEFT JOIN citations c ON p.id = c.item_id AND c.item_type = 'paper'
 GROUP BY p.id, p.title, p.author;
 
 -- View for user activity summary

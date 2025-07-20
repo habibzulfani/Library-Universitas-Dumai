@@ -36,9 +36,13 @@ func main() {
 
 	// CORS middleware
 	r.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			c.Header("Access-Control-Allow-Origin", origin)
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, Content-Length, Accept-Encoding, X-CSRF-Token, Accept")
+		c.Header("Access-Control-Allow-Credentials", "true")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
@@ -57,6 +61,7 @@ func main() {
 	paperHandler := handlers.NewPaperHandler(database.GetDB(), config)
 	authorHandler := handlers.NewAuthorHandler(database.GetDB())
 	statsHandler := handlers.NewStatsHandler(database.GetDB())
+	metadataHandler := handlers.NewMetadataHandler()
 
 	// API routes
 	api := r.Group("/api")
@@ -91,6 +96,28 @@ func main() {
 			}
 			public.GET("/users/count", statsHandler.GetUserCount)
 			public.GET("/downloads/count", statsHandler.GetDownloadCount)
+			public.GET("/users-per-month", statsHandler.GetUsersPerMonth)
+			public.GET("/downloads-per-month", statsHandler.GetDownloadsPerMonth)
+			public.GET("/users/:id", authHandler.GetPublicUser)
+			public.GET("/citations/count", statsHandler.GetCitationCount)
+			public.GET("/citations-per-month", statsHandler.GetCitationsPerMonth)
+			public.GET("/users/:id/stats", statsHandler.GetUserStatsById)
+			public.GET("/users/:id/citations-per-month", statsHandler.GetUserCitationsPerMonthById)
+			public.GET("/users/:id/downloads-per-month", statsHandler.GetUserDownloadsPerMonthById)
+			public.GET("/books/:id/stats", statsHandler.GetBookStats)
+			public.GET("/papers/:id/stats", statsHandler.GetPaperStats)
+			public.GET("/books-per-month", statsHandler.GetBooksPerMonth)
+			public.GET("/papers-per-month", statsHandler.GetPapersPerMonth)
+
+			// Public download and citation routes
+			public.GET("/books/:id/download", bookHandler.DownloadBook)
+			public.POST("/books/:id/cite", bookHandler.CiteBook)
+			public.GET("/papers/:id/download", paperHandler.DownloadPaper)
+			public.POST("/papers/:id/cite", paperHandler.CitePaper)
+
+			// Metadata extraction routes
+			public.POST("/metadata/extract", metadataHandler.ExtractMetadata)
+			public.POST("/metadata/extract-from-url", metadataHandler.ExtractMetadataFromURL)
 		}
 
 		// Protected routes
@@ -111,6 +138,7 @@ func main() {
 				user.PUT("/books/:id", bookHandler.UpdateUserBook)
 				user.DELETE("/books/:id", bookHandler.DeleteUserBook)
 				user.GET("/books/:id/download", bookHandler.DownloadBook)
+				user.POST("/books/:id/cite", bookHandler.CiteBook)
 
 				// User paper routes
 				user.POST("/papers", paperHandler.CreateUserPaper)
@@ -118,6 +146,10 @@ func main() {
 				user.PUT("/papers/:id", paperHandler.UpdateUserPaper)
 				user.DELETE("/papers/:id", paperHandler.DeleteUserPaper)
 				user.GET("/papers/:id/download", paperHandler.DownloadPaper)
+				user.POST("/papers/:id/cite", paperHandler.CitePaper)
+				user.GET("/citations-per-month", statsHandler.GetUserCitationsPerMonth)
+				user.GET("/stats", statsHandler.GetUserStats)
+				user.GET("/downloads-per-month", statsHandler.GetUserDownloadsPerMonth)
 			}
 		}
 
@@ -131,6 +163,7 @@ func main() {
 			admin.GET("/users/:id", authHandler.GetUser)
 			admin.PUT("/users/:id", authHandler.UpdateUser)
 			admin.DELETE("/users/:id", authHandler.DeleteUser)
+			admin.POST("/users/bulk-delete", authHandler.BulkDeleteUsers)
 			admin.GET("/lecturers", authHandler.GetPendingLecturers)
 			admin.POST("/lecturers/:id/approve", authHandler.ApproveLecturer)
 

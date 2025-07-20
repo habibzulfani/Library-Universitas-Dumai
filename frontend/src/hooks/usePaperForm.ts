@@ -18,6 +18,7 @@ interface PaperFormData {
     pages: string;
     doi: string;
     issn: string;
+    language: string;
     file: File | null;
     coverImage: File | null;
 }
@@ -46,6 +47,7 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
         pages: '',
         doi: '',
         issn: '',
+        language: '',
         file: null,
         coverImage: null,
     });
@@ -54,18 +56,18 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
     const [existingFile, setExistingFile] = useState<string | null>(null);
     const [existingFileUrl, setExistingFileUrl] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [editingAuthorIndex, setEditingAuthorIndex] = useState<number | null>(null);
 
     // Initialize form data when editing paper changes
     useEffect(() => {
         if (editingPaper) {
-            const existingAuthors = editingPaper.authors?.map(a => a.author_name) || [editingPaper.author];
-            const firstAuthor = existingAuthors.length > 0 ? existingAuthors[0] : '';
-            const remainingAuthors = existingAuthors.slice(1);
+            // Get all authors from the paper
+            const existingAuthors = editingPaper.authors?.map(a => a.author_name) || (editingPaper.author ? [editingPaper.author] : []);
 
             setPaperFormData({
                 title: editingPaper.title,
-                author: firstAuthor,
-                authors: remainingAuthors,
+                author: '', // Always empty for editing - authors go in tags
+                authors: existingAuthors, // All authors go in tags
                 abstract: editingPaper.abstract || '',
                 keywords: editingPaper.keywords || '',
                 advisor: editingPaper.advisor || '',
@@ -78,14 +80,13 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
                 pages: editingPaper.pages || '',
                 doi: editingPaper.doi || '',
                 issn: editingPaper.issn || '',
+                language: editingPaper.language || '',
                 file: null,
                 coverImage: null,
             });
-
             if (editingPaper.cover_image_url) {
                 setCoverPreview(editingPaper.cover_image_url);
             }
-
             if (editingPaper.file_url) {
                 const fileName = editingPaper.file_url.split('/').pop() || '';
                 setExistingFile(fileName);
@@ -102,12 +103,11 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
             return false;
         }
 
-        const allAuthors = [...paperFormData.authors];
-        if (paperFormData.author.trim() && !allAuthors.includes(paperFormData.author.trim())) {
-            allAuthors.push(paperFormData.author.trim());
-        }
+        // Check if we have at least one author (either in input or in authors array)
+        const hasAuthorInput = paperFormData.author.trim() !== '';
+        const hasAuthorsInArray = paperFormData.authors.length > 0;
 
-        if (allAuthors.length === 0 && !paperFormData.author.trim()) {
+        if (!hasAuthorInput && !hasAuthorsInArray) {
             toast.error('At least one author is required');
             return false;
         }
@@ -137,30 +137,45 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
 
     const handlePaperSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        console.log('Paper form submission started');
+
+        // Get all authors including the current input
+        const allAuthors = [...paperFormData.authors];
+        if (paperFormData.author.trim() && !allAuthors.includes(paperFormData.author.trim())) {
+            allAuthors.push(paperFormData.author.trim());
+        }
+
+        // Check for duplicate authors
+        const lowerAuthors = allAuthors.map(a => a.toLowerCase());
+        if (new Set(lowerAuthors).size !== lowerAuthors.length) {
+            toast.error('Duplicate author name');
+            return;
+        }
+
+        // Check if we have at least one author
+        if (allAuthors.length === 0) {
+            toast.error('At least one author is required');
+            return;
+        }
 
         if (!validateForm()) {
             return;
         }
 
+        console.log('Paper validation passed, starting submission');
         setIsSubmitting(true);
+
         try {
             const formData = new FormData();
-
-            // Required fields
             formData.append('title', paperFormData.title);
             formData.append('abstract', paperFormData.abstract);
 
-            // Handle multiple authors
-            const allAuthors = [...paperFormData.authors];
-            if (paperFormData.author.trim() && !allAuthors.includes(paperFormData.author.trim())) {
-                allAuthors.push(paperFormData.author.trim());
-            }
-
+            // Add all authors to FormData
             allAuthors.forEach(author => {
                 formData.append('authors[]', author);
             });
 
-            // Optional fields
+            // Add other fields
             if (paperFormData.keywords) formData.append('keywords', paperFormData.keywords);
             if (paperFormData.advisor) formData.append('advisor', paperFormData.advisor);
             if (paperFormData.university) formData.append('university', paperFormData.university);
@@ -172,10 +187,24 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
             if (paperFormData.pages) formData.append('pages', paperFormData.pages);
             if (paperFormData.doi) formData.append('doi', paperFormData.doi);
             if (paperFormData.issn) formData.append('issn', paperFormData.issn);
+            if (paperFormData.language) formData.append('language', paperFormData.language);
             if (paperFormData.file) formData.append('file', paperFormData.file);
             if (paperFormData.coverImage) formData.append('cover_image', paperFormData.coverImage);
 
+            console.log('Paper FormData prepared:', {
+                title: paperFormData.title,
+                authors: allAuthors,
+                isAdmin,
+                editingPaper: !!editingPaper
+            });
+
+            // Debug: Log all FormData entries
+            for (let [key, value] of formData.entries()) {
+                console.log(`Paper FormData entry: ${key} = ${value}`);
+            }
+
             if (editingPaper) {
+                console.log('Updating existing paper');
                 if (isAdmin) {
                     await papersAPI.updatePaper(editingPaper.id, formData);
                 } else {
@@ -183,6 +212,7 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
                 }
                 toast.success('Paper updated successfully');
             } else {
+                console.log('Creating new paper');
                 if (isAdmin) {
                     await papersAPI.createPaper(formData);
                 } else {
@@ -190,10 +220,11 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
                 }
                 toast.success('Paper created successfully');
             }
-
+            console.log('Paper API call successful');
             onSuccess();
             resetPaperForm();
         } catch (error) {
+            console.error('Paper form submission error:', error);
             const errorMessage = error instanceof Error ? error.message : 'Failed to save paper';
             toast.error(errorMessage);
             if (onError) {
@@ -230,28 +261,49 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
         }
     };
 
+    // Add author from input to tags (if not duplicate, not empty, not same as input)
     const handleAddAuthor = () => {
-        if (paperFormData.author.trim() && !paperFormData.authors.includes(paperFormData.author.trim())) {
-            setPaperFormData({
-                ...paperFormData,
-                authors: [...paperFormData.authors, paperFormData.author.trim()],
-                author: ''
-            });
+        const input = paperFormData.author.trim();
+        if (!input) return;
+        // Prevent duplicates (case-insensitive)
+        if ([input.toLowerCase(), ...paperFormData.authors.map(a => a.toLowerCase())].filter((a, i, arr) => arr.indexOf(a) === i).length !== paperFormData.authors.length + 1) {
+            toast.error('Duplicate author name');
+            return;
         }
-    };
 
-    const handleEditAuthor = (index: number) => {
+        let newAuthors: string[];
+        if (editingAuthorIndex !== null) {
+            // Insert back at the original position when editing
+            newAuthors = [...paperFormData.authors];
+            newAuthors.splice(editingAuthorIndex, 0, input);
+            setEditingAuthorIndex(null);
+        } else {
+            // Add to the end for new authors
+            newAuthors = [...paperFormData.authors, input];
+        }
+
         setPaperFormData({
             ...paperFormData,
-            author: paperFormData.authors[index],
-            authors: paperFormData.authors.filter((_, i) => i !== index)
+            authors: newAuthors,
+            author: '',
         });
     };
 
+    // Edit a tag: move tag value to input, remove from tags
+    const handleEditAuthor = (index: number) => {
+        setEditingAuthorIndex(index);
+        setPaperFormData({
+            ...paperFormData,
+            author: paperFormData.authors[index],
+            authors: paperFormData.authors.filter((_, i) => i !== index),
+        });
+    };
+
+    // Remove a tag
     const handleRemoveAuthor = (index: number) => {
         setPaperFormData({
             ...paperFormData,
-            authors: paperFormData.authors.filter((_, i) => i !== index)
+            authors: paperFormData.authors.filter((_, i) => i !== index),
         });
     };
 
@@ -279,12 +331,14 @@ export function usePaperForm({ onSuccess, onError, editingPaper, isAdmin = false
             pages: '',
             doi: '',
             issn: '',
+            language: '',
             file: null,
             coverImage: null,
         });
         setCoverPreview(null);
         setExistingFile(null);
         setExistingFileUrl(null);
+        setEditingAuthorIndex(null);
     };
 
     return {

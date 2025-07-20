@@ -19,21 +19,35 @@ import {
   ExclamationTriangleIcon,
   CloudArrowUpIcon,
   CheckIcon,
-  AcademicCapIcon
+  AcademicCapIcon,
+  ClipboardDocumentIcon
 } from '@heroicons/react/24/outline';
 import { useToast } from '@chakra-ui/react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend
+} from 'recharts';
 
 // Add imports at the top
 import BookForm from '@/components/forms/BookForm';
 import PaperForm from '@/components/forms/PaperForm';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import LecturerApproval from '@/components/admin/LecturerApproval';
+import SearchBar from '@/components/ui/SearchBar';
+import Pagination from '@/components/ui/Pagination';
 
 interface Stats {
   totalBooks: number;
   totalPapers: number;
   totalUsers: number;
   totalDownloads: number;
+  totalCitations: number;
 }
 
 interface Book {
@@ -45,12 +59,13 @@ interface Book {
   isbn?: string;
   subject?: string;
   language?: string;
-  pages?: number;
+  pages?: string;
   summary?: string;
   file_url?: string;
   created_at: string;
   updated_at: string;
   authors: { id: number; author_name: string }[];
+  doi?: string;
 }
 
 interface Paper {
@@ -88,6 +103,7 @@ interface User {
   email_verified: boolean;
   is_approved: boolean;
   created_at: string;
+  address?: string; // Add missing address field
 }
 
 interface BookFormData {
@@ -99,7 +115,7 @@ interface BookFormData {
   isbn: string;
   subject: string;
   language: string;
-  pages: number;
+  pages: string;
   summary: string;
 }
 
@@ -127,7 +143,8 @@ export default function AdminPage() {
     totalBooks: 0,
     totalPapers: 0,
     totalUsers: 0,
-    totalDownloads: 0
+    totalDownloads: 0,
+    totalCitations: 0,
   });
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isLoading, setIsLoading] = useState(true);
@@ -158,13 +175,6 @@ export default function AdminPage() {
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ type: 'book' | 'paper'; id: number; title: string } | null>(null);
 
-  // File upload states
-  const [bookFile, setBookFile] = useState<File | null>(null);
-  const [paperFile, setPaperFile] = useState<File | null>(null);
-  // Add cover image state
-  const [bookCoverFile, setBookCoverFile] = useState<File | null>(null);
-  const [paperCoverFile, setPaperCoverFile] = useState<File | null>(null);
-
   // Bulk delete states
   const [selectedBooks, setSelectedBooks] = useState<number[]>([]);
   const [selectedPapers, setSelectedPapers] = useState<number[]>([]);
@@ -172,43 +182,12 @@ export default function AdminPage() {
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState<{ type: 'book' | 'paper' | 'user'; count: number } | null>(null);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
-  // Form data states
-  const [bookFormData, setBookFormData] = useState<BookFormData>({
-    title: '',
-    author: '',
-    authors: [],
-    publisher: '',
-    published_year: new Date().getFullYear(),
-    isbn: '',
-    subject: '',
-    language: 'English',
-    pages: 0,
-    summary: ''
-  });
-  const [paperFormData, setPaperFormData] = useState<PaperFormData>({
-    title: '',
-    author: '',
-    authors: [],
-    advisor: '',
-    university: 'Universitas Dumai',
-    department: '',
-    year: new Date().getFullYear(),
-    issn: '',
-    journal: '',
-    volume: 0,
-    issue: 0,
-    pages: '',
-    doi: '',
-    abstract: '',
-    keywords: ''
-  });
-
   // Add state for editing user and user form
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showUserForm, setShowUserForm] = useState(false);
   const [isUserSubmitting, setIsUserSubmitting] = useState(false);
   const [showDeleteUserConfirm, setShowDeleteUserConfirm] = useState<{ id: number; name: string } | null>(null);
-  const [userFormData, setUserFormData] = useState<Partial<User>>({});
+  const [userFormData, setUserFormData] = useState<Partial<User & { address?: string }>>({});
 
   // Add state for add user modal and form
   const [showAddUserModal, setShowAddUserModal] = useState(false);
@@ -231,6 +210,14 @@ export default function AdminPage() {
   const toast = useToast();
   const [pendingLecturerCount, setPendingLecturerCount] = useState(0);
   const [lastPendingLecturerCount, setLastPendingLecturerCount] = useState(0);
+
+  // Add state for user and download stats
+  const [userStats, setUserStats] = useState<{ year: number; month: number; count: number }[]>([]);
+  const [downloadStats, setDownloadStats] = useState<{ year: number; month: number; count: number }[]>([]);
+  const [isLoadingUserStats, setIsLoadingUserStats] = useState(false);
+  const [isLoadingDownloadStats, setIsLoadingDownloadStats] = useState(false);
+  const [citationStats, setCitationStats] = useState<{ year: number; month: number; count: number }[]>([]);
+  const [isLoadingCitationStats, setIsLoadingCitationStats] = useState(false);
 
   // Fetch departments when faculty changes in add user form
   useEffect(() => {
@@ -299,11 +286,12 @@ export default function AdminPage() {
   const loadStats = async () => {
     try {
       setIsLoading(true);
-      const [booksRes, papersRes, usersRes, downloadsRes] = await Promise.all([
+      const [booksRes, papersRes, usersRes, downloadsRes, citationsRes] = await Promise.all([
         api.get('/books'),
         api.get('/papers'),
         api.get('/users/count'),
-        api.get('/downloads/count')
+        api.get('/downloads/count'),
+        api.get('/citations/count'),
       ]).catch(error => {
         throw new Error('Failed to fetch dashboard statistics: ' + (error.response?.data?.message || error.message));
       });
@@ -312,7 +300,8 @@ export default function AdminPage() {
         totalBooks: booksRes.data.total || 0,
         totalPapers: papersRes.data.total || 0,
         totalUsers: usersRes.data.count || 0,
-        totalDownloads: downloadsRes.data.count || 0
+        totalDownloads: downloadsRes.data.count || 0,
+        totalCitations: citationsRes.data.count || 0,
       });
     } catch (error: any) {
       setError(error.message || 'Failed to load dashboard statistics');
@@ -476,11 +465,12 @@ export default function AdminPage() {
 
   const handleDeleteBook = async (id: number) => {
     try {
-      await api.delete(`/books/${id}`);
+      const response = await api.delete(`/admin/books/${id}`);
       await logActivity('delete_book', id, 'book');
       setSuccessMessage('Book deleted successfully');
       setBooks(books.filter(book => book.id !== id));
       setShowDeleteConfirm(null);
+      console.log('Book deleted, backend response:', response?.data);
     } catch (error: any) {
       setError('Failed to delete book');
       console.error('Error deleting book:', error);
@@ -489,7 +479,7 @@ export default function AdminPage() {
 
   const handleDeletePaper = async (id: number) => {
     try {
-      await api.delete(`/papers/${id}`);
+      await api.delete(`/admin/papers/${id}`);
       await logActivity('delete_paper', id, 'paper');
       setSuccessMessage('Paper deleted successfully');
       setPapers(papers.filter(paper => paper.id !== id));
@@ -500,208 +490,42 @@ export default function AdminPage() {
     }
   };
 
-  const validateBookForm = () => {
-    const errors: string[] = [];
-
-    if (!bookFormData.title.trim()) {
-      errors.push('Title is required');
-    }
-    if (!bookFormData.author.trim() && (!bookFormData.authors || bookFormData.authors.length === 0)) {
-      errors.push('At least one author is required');
-    }
-    if (!bookFormData.publisher.trim()) {
-      errors.push('Publisher is required');
-    }
-    if (!bookFormData.published_year) {
-      errors.push('Published year is required');
-    }
-    if (bookFormData.published_year && (bookFormData.published_year < 1800 || bookFormData.published_year > new Date().getFullYear())) {
-      errors.push('Published year must be between 1800 and current year');
-    }
-    if (!bookFormData.subject.trim()) {
-      errors.push('Subject is required');
-    }
-    if (!bookFormData.language.trim()) {
-      errors.push('Language is required');
-    }
-    if (!bookFormData.pages || bookFormData.pages <= 0) {
-      errors.push('Number of pages must be greater than 0');
-    }
-    if (!bookFormData.summary.trim()) {
-      errors.push('Summary is required');
-    }
-    if (!editingBook && !bookFile) {
-      errors.push('Book file is required for new books');
-    }
-
-    return errors;
-  };
-
-  const validatePaperForm = () => {
-    const errors: string[] = [];
-
-    if (!paperFormData.title.trim()) {
-      errors.push('Title is required');
-    }
-    if (!paperFormData.author.trim() && (!paperFormData.authors || paperFormData.authors.length === 0)) {
-      errors.push('At least one author is required');
-    }
-    if (!paperFormData.advisor.trim()) {
-      errors.push('Advisor is required');
-    }
-    if (!paperFormData.university.trim()) {
-      errors.push('University is required');
-    }
-    if (!paperFormData.department.trim()) {
-      errors.push('Department is required');
-    }
-    if (!paperFormData.year || paperFormData.year < 1800 || paperFormData.year > new Date().getFullYear()) {
-      errors.push('Year must be between 1800 and current year');
-    }
-    if (!paperFormData.abstract.trim()) {
-      errors.push('Abstract is required');
-    }
-    if (!paperFormData.keywords.trim()) {
-      errors.push('Keywords are required');
-    }
-    if (!editingPaper && !paperFile) {
-      errors.push('Paper file is required for new papers');
-    }
-
-    return errors;
-  };
-
-  const handleBookSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccessMessage(null);
-    setIsLoading(true);
-    try {
-      let fileUrl = bookFile ? await handleFileUpload(bookFile, 'book') : undefined;
-      let coverImageUrl = bookCoverFile ? await handleFileUpload(bookCoverFile, 'book') : undefined;
-      const bookData = {
-        ...bookFormData,
-        file_url: fileUrl,
-        cover_image_url: coverImageUrl
-      };
-      if (editingBook) {
-        await api.put(`/admin/books/${editingBook.id}`, bookData);
-        await logActivity('update_book', editingBook.id, 'book');
-        setSuccessMessage('Book updated successfully');
-      } else {
-        const response = await api.post('/admin/books', bookData);
-        await logActivity('create_book', response.data.id, 'book');
-        setSuccessMessage('Book added successfully');
-      }
-      resetBookForm();
-      loadBooks();
-    } catch (err: any) {
-      setError('Failed to save book.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handlePaperSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccessMessage(null);
-    setIsLoading(true);
-    try {
-      let fileUrl = paperFile ? await handleFileUpload(paperFile, 'paper') : undefined;
-      let coverImageUrl = paperCoverFile ? await handleFileUpload(paperCoverFile, 'paper') : undefined;
-      const payload = {
-        ...paperFormData,
-        authors: paperFormData.authors,
-        issn: paperFormData.issn,
-        journal: paperFormData.journal,
-        volume: paperFormData.volume,
-        issue: paperFormData.issue,
-        pages: paperFormData.pages,
-        doi: paperFormData.doi,
-        file_url: fileUrl,
-        cover_image_url: coverImageUrl
-      };
-      if (editingPaper) {
-        await api.put(`/admin/papers/${editingPaper.id}`, payload);
-        await logActivity('update_paper', editingPaper.id, 'paper');
-        setSuccessMessage('Paper updated successfully');
-      } else {
-        const response = await api.post('/admin/papers', payload);
-        await logActivity('create_paper', response.data.id, 'paper');
-        setSuccessMessage('Paper added successfully');
-      }
-      resetPaperForm();
-      loadPapers();
-    } catch (err: any) {
-      setError('Failed to save paper.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const resetBookForm = () => {
-    setBookFormData({
-      title: '',
-      author: '',
-      authors: [],
-      publisher: '',
-      published_year: new Date().getFullYear(),
-      isbn: '',
-      subject: '',
-      language: 'English',
-      pages: 0,
-      summary: ''
-    });
-    setBookFile(null);
-    setShowBookForm(false);
-    setEditingBook(null);
-  };
-
-  const resetPaperForm = () => {
-    setEditingPaper(null);
-    setPaperFormData({
-      title: '',
-      author: '',
-      authors: [],
-      advisor: '',
-      university: 'Universitas Dumai',
-      department: '',
-      year: new Date().getFullYear(),
-      issn: '',
-      journal: '',
-      volume: 0,
-      issue: 0,
-      pages: '',
-      doi: '',
-      abstract: '',
-      keywords: ''
-    });
-    setPaperFile(null);
-    setPaperCoverFile(null);
-    setShowPaperForm(false);
-  };
-
-  const startEditBook = (book: Book) => {
-    setEditingBook(book);
-    setShowBookForm(true);
-  };
-
   const handleBookSuccess = () => {
     setShowBookForm(false);
     setEditingBook(null);
     loadBooks();
   };
 
-  const startEditPaper = (paper: Paper) => {
-    setEditingPaper(paper);
-    setShowPaperForm(true);
+  const startEditBook = async (book: Book) => {
+    try {
+      // Fetch the full book data including authors
+      const response = await api.get(`/books/${book.id}`);
+      const fullBook = response.data;
+      setEditingBook(fullBook);
+      setShowBookForm(true);
+    } catch (error: any) {
+      setError('Failed to load book details: ' + (error.response?.data?.message || error.message));
+      console.error('Error loading book details:', error);
+    }
   };
 
   const handlePaperSuccess = () => {
     setShowPaperForm(false);
     setEditingPaper(null);
     loadPapers();
+  };
+
+  const startEditPaper = async (paper: Paper) => {
+    try {
+      // Fetch the full paper data including authors
+      const response = await api.get(`/papers/${paper.id}`);
+      const fullPaper = response.data;
+      setEditingPaper(fullPaper);
+      setShowPaperForm(true);
+    } catch (error: any) {
+      setError('Failed to load paper details: ' + (error.response?.data?.message || error.message));
+      console.error('Error loading paper details:', error);
+    }
   };
 
   // Enhanced filteredBooks
@@ -716,7 +540,8 @@ export default function AdminPage() {
       (book.isbn && book.isbn.toLowerCase().includes(search)) ||
       (book.subject && book.subject.toLowerCase().includes(search)) ||
       (book.language && book.language.toLowerCase().includes(search)) ||
-      (book.summary && book.summary.toLowerCase().includes(search))
+      (book.summary && book.summary.toLowerCase().includes(search)) ||
+      (book.doi && book.doi.toLowerCase().includes(search))
     );
   });
 
@@ -802,7 +627,7 @@ export default function AdminPage() {
   // Bulk delete handlers
   const handleSelectAllBooks = (checked: boolean) => {
     if (checked) {
-      setSelectedBooks(filteredBooks.map(book => book.id));
+      setSelectedBooks(books.map(book => book.id));
     } else {
       setSelectedBooks([]);
     }
@@ -818,7 +643,7 @@ export default function AdminPage() {
 
   const handleSelectAllPapers = (checked: boolean) => {
     if (checked) {
-      setSelectedPapers(filteredPapers.map(paper => paper.id));
+      setSelectedPapers(papers.map(paper => paper.id));
     } else {
       setSelectedPapers([]);
     }
@@ -853,10 +678,10 @@ export default function AdminPage() {
 
     setIsBulkDeleting(true);
     try {
-      // Delete books one by one (or implement bulk delete API if available)
       for (const bookId of selectedBooks) {
-        await api.delete(`/books/${bookId}`);
+        const response = await api.delete(`/admin/books/${bookId}`);
         await logActivity('delete_book', bookId, 'book');
+        console.log('Bulk book deleted, backend response:', response?.data);
       }
       setSuccessMessage(`${selectedBooks.length} book(s) deleted successfully`);
       setSelectedBooks([]);
@@ -877,7 +702,7 @@ export default function AdminPage() {
     try {
       // Delete papers one by one (or implement bulk delete API if available)
       for (const paperId of selectedPapers) {
-        await api.delete(`/papers/${paperId}`);
+        await api.delete(`/admin/papers/${paperId}`);
         await logActivity('delete_paper', paperId, 'paper');
       }
       setSuccessMessage(`${selectedPapers.length} paper(s) deleted successfully`);
@@ -947,6 +772,7 @@ export default function AdminPage() {
       department_id: user.department_id,
       nim_nidn: user.nim_nidn,
       is_approved: user.is_approved,
+      address: user.address || '', // Add missing address field
     });
     setShowUserForm(true);
   };
@@ -973,6 +799,8 @@ export default function AdminPage() {
       await authAPI.updateUser(editingUser.id, {
         ...userFormData,
         faculty,
+        address: userFormData.address, // Ensure address is included
+        department_id: userFormData.department_id, // Ensure department_id is included
       });
       setSuccessMessage('User updated successfully');
       setShowUserForm(false);
@@ -1009,7 +837,11 @@ export default function AdminPage() {
     e.preventDefault();
     setIsAddUserSubmitting(true);
     try {
-      await authAPI.adminRegister(addUserForm);
+      const formDataObj = new FormData();
+      Object.entries(addUserForm).forEach(([key, value]) => {
+        formDataObj.append(key, value as string);
+      });
+      await authAPI.register(formDataObj);
       setSuccessMessage('User added successfully');
       setShowAddUserModal(false);
       setAddUserForm({
@@ -1048,6 +880,38 @@ export default function AdminPage() {
       fetchDepartments();
     }
   }, [userFormData.faculty, showUserForm]);
+
+  // Fetch user and download stats for graphs
+  useEffect(() => {
+    if (activeTab === 'dashboard' && isAuthenticated && isAdmin) {
+      setIsLoadingUserStats(true);
+      setIsLoadingDownloadStats(true);
+      api.get('/users-per-month')
+        .then(res => setUserStats(Array.isArray(res.data) ? res.data : []))
+        .catch(() => setUserStats([]))
+        .finally(() => setIsLoadingUserStats(false));
+      api.get('/downloads-per-month')
+        .then(res => setDownloadStats(Array.isArray(res.data) ? res.data : []))
+        .catch(() => setDownloadStats([]))
+        .finally(() => setIsLoadingDownloadStats(false));
+    }
+  }, [activeTab, isAuthenticated, isAdmin]);
+
+  // Fetch citation stats for graph
+  useEffect(() => {
+    if (activeTab === 'dashboard' && isAuthenticated && isAdmin) {
+      setIsLoadingCitationStats(true);
+      api.get('/citations-per-month')
+        .then(res => setCitationStats(Array.isArray(res.data) ? res.data : []))
+        .catch(() => setCitationStats([]))
+        .finally(() => setIsLoadingCitationStats(false));
+    }
+  }, [activeTab, isAuthenticated, isAdmin]);
+
+  // Helper to format month labels
+  const formatMonth = (year: number, month: number) => {
+    return `${year}-${month.toString().padStart(2, '0')}`;
+  };
 
   if (!isAuthenticated) {
     return (
@@ -1249,6 +1113,19 @@ export default function AdminPage() {
                       </div>
                     </div>
                   </div>
+
+                  <div className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200">
+                    <div className="flex items-center">
+                      <div className="p-3 bg-[#e6f4ec] rounded-xl">
+                        <ClipboardDocumentIcon className="h-8 w-8 text-[#38b36c]" />
+                      </div>
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-gray-600">Citations</p>
+                        <p className="text-3xl font-bold text-gray-900">{stats.totalCitations}</p>
+                        <p className="text-xs text-[#38b36c] mt-1">↗ Total citations</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -1288,6 +1165,61 @@ export default function AdminPage() {
                 </button>
               </div>
             </div>
+
+            {/* User Registrations Graph */}
+            <div className="bg-white rounded-xl shadow-sm p-6 mt-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">User Registrations Per Month</h3>
+              {isLoadingUserStats ? (
+                <div className="text-center py-8">Loading...</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={userStats.map(d => ({ ...d, label: formatMonth(d.year, d.month) }))} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="count" name="Users" stroke="#38b36c" strokeWidth={2} dot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            {/* Downloads Graph */}
+            <div className="bg-white rounded-xl shadow-sm p-6 mt-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Downloads Per Month</h3>
+              {isLoadingDownloadStats ? (
+                <div className="text-center py-8">Loading...</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={downloadStats.map(d => ({ ...d, label: formatMonth(d.year, d.month) }))} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="count" name="Downloads" stroke="#009846" strokeWidth={2} dot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+            {/* Citations Graph */}
+            <div className="bg-white rounded-xl shadow-sm p-6 mt-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Citations Per Month</h3>
+              {isLoadingCitationStats ? (
+                <div className="text-center py-8">Loading...</div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={citationStats.map(d => ({ ...d, label: formatMonth(d.year, d.month) }))} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="count" name="Citations" stroke="#eab308" strokeWidth={2} dot={{ r: 4 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
         )}
 
@@ -1298,27 +1230,30 @@ export default function AdminPage() {
 
             {/* Books List */}
             <div className="bg-white rounded-xl shadow-sm p-6">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 flex-wrap">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">Books Management</h2>
                   <p className="text-gray-600 mt-1">Manage your book collection</p>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  {/* Remove the opening <div> here, as the <form> now wraps the search input */}
-                  <form onSubmit={handleBookSearch} className="relative">
-                    <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-center w-full sm:w-auto">
+                  <form onSubmit={handleBookSearch} className="flex w-full sm:w-auto flex-1 min-w-[220px] gap-2">
                     <input
-                      type="text"
-                      placeholder="Search books..."
+                      type="search"
+                      placeholder="Search books by title, author, subject, ISBN, or DOI..."
                       value={bookSearch}
-                      onChange={(e) => setBookSearch(e.target.value)}
-                      className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#38b36c] focus:border-transparent"
+                      onChange={e => setBookSearch(e.target.value)}
+                      className="block w-full pl-3 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-[#38b36c] focus:border-[#38b36c]"
                     />
+                    <button
+                      type="submit"
+                      className="bg-[#38b36c] text-white px-4 py-2 rounded-md hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-[#38b36c]"
+                    >
+                      Search
+                    </button>
                   </form>
                   <button
                     onClick={() => {
                       setEditingBook(null);
-                      resetBookForm();
                       setShowBookForm(true);
                     }}
                     className="inline-flex items-center px-4 py-2 bg-[#38b36c] text-white text-sm font-medium rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-colors duration-200"
@@ -1340,11 +1275,11 @@ export default function AdminPage() {
               </div>
 
               {/* Table header for checkboxes */}
-              {filteredBooks.length > 0 && (
+              {books.length > 0 && (
                 <div className="flex items-center mb-2">
                   <input
                     type="checkbox"
-                    checked={selectedBooks.length === filteredBooks.length}
+                    checked={selectedBooks.length === books.length}
                     onChange={e => handleSelectAllBooks(e.target.checked)}
                     className="mr-2 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
                   />
@@ -1367,7 +1302,7 @@ export default function AdminPage() {
                     </div>
                   ))}
                 </div>
-              ) : filteredBooks.length === 0 ? (
+              ) : books.length === 0 ? (
                 <div className="text-center py-12">
                   <BookOpenIcon className="mx-auto h-12 w-12 text-gray-400" />
                   <h3 className="mt-2 text-sm font-medium text-gray-900">No books found</h3>
@@ -1379,7 +1314,6 @@ export default function AdminPage() {
                       <button
                         onClick={() => {
                           setEditingBook(null);
-                          resetBookForm();
                           setShowBookForm(true);
                         }}
                         className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-[#38b36c] hover:bg-[#2e8c55]"
@@ -1392,7 +1326,7 @@ export default function AdminPage() {
                 </div>
               ) : (
                 <div className="grid gap-4">
-                  {filteredBooks.map((book) => (
+                  {books.map((book) => (
                     <div key={book.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 flex items-start">
                       <input
                         type="checkbox"
@@ -1508,6 +1442,13 @@ export default function AdminPage() {
                 />
               )}
             </div>
+            {booksTotalPages > 1 && (
+              <Pagination
+                currentPage={booksPage}
+                totalPages={booksTotalPages}
+                onPageChange={handleBooksPageChange}
+              />
+            )}
           </div>
         )}
 
@@ -1518,27 +1459,30 @@ export default function AdminPage() {
 
             {/* Papers List */}
             <div className="bg-white rounded-xl shadow-sm p-6">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 flex-wrap">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">Papers Management</h2>
                   <p className="text-gray-600 mt-1">Manage your research papers collection</p>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  {/* Remove the opening <div> here, as the <form> now wraps the search input */}
-                  <form onSubmit={handlePaperSearch} className="relative">
-                    <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-center w-full sm:w-auto">
+                  <form onSubmit={handlePaperSearch} className="flex w-full sm:w-auto flex-1 min-w-[220px] gap-2">
                     <input
-                      type="text"
-                      placeholder="Search papers..."
+                      type="search"
+                      placeholder="Search papers by title, author, abstract, keywords, ISSN, or DOI..."
                       value={paperSearch}
-                      onChange={(e) => setPaperSearch(e.target.value)}
-                      className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#38b36c] focus:border-transparent"
+                      onChange={e => setPaperSearch(e.target.value)}
+                      className="block w-full pl-3 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-[#38b36c] focus:border-[#38b36c]"
                     />
+                    <button
+                      type="submit"
+                      className="bg-[#38b36c] text-white px-4 py-2 rounded-md hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-[#38b36c]"
+                    >
+                      Search
+                    </button>
                   </form>
                   <button
                     onClick={() => {
                       setEditingPaper(null);
-                      resetPaperForm();
                       setShowPaperForm(true);
                     }}
                     className="inline-flex items-center px-4 py-2 bg-[#38b36c] text-white text-sm font-medium rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-colors duration-200"
@@ -1560,11 +1504,11 @@ export default function AdminPage() {
               </div>
 
               {/* Table header for checkboxes */}
-              {filteredPapers.length > 0 && (
+              {papers.length > 0 && (
                 <div className="flex items-center mb-2">
                   <input
                     type="checkbox"
-                    checked={selectedPapers.length === filteredPapers.length}
+                    checked={selectedPapers.length === papers.length}
                     onChange={e => handleSelectAllPapers(e.target.checked)}
                     className="mr-2 h-4 w-4 rounded border-gray-300 text-[#38b36c] focus:ring-[#38b36c]"
                   />
@@ -1587,7 +1531,7 @@ export default function AdminPage() {
                     </div>
                   ))}
                 </div>
-              ) : filteredPapers.length === 0 ? (
+              ) : papers.length === 0 ? (
                 <div className="text-center py-12">
                   <DocumentTextIcon className="mx-auto h-12 w-12 text-gray-400" />
                   <h3 className="mt-2 text-sm font-medium text-gray-900">No papers found</h3>
@@ -1599,7 +1543,6 @@ export default function AdminPage() {
                       <button
                         onClick={() => {
                           setEditingPaper(null);
-                          resetPaperForm();
                           setShowPaperForm(true);
                         }}
                         className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-[#38b36c] hover:bg-[#2e8c55]"
@@ -1612,7 +1555,7 @@ export default function AdminPage() {
                 </div>
               ) : (
                 <div className="grid gap-4">
-                  {filteredPapers.map((paper) => (
+                  {papers.map((paper) => (
                     <div key={paper.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 flex items-start">
                       <input
                         type="checkbox"
@@ -1734,6 +1677,13 @@ export default function AdminPage() {
                 />
               )}
             </div>
+            {papersTotalPages > 1 && (
+              <Pagination
+                currentPage={papersPage}
+                totalPages={papersTotalPages}
+                onPageChange={handlePapersPageChange}
+              />
+            )}
           </div>
         )}
 
@@ -1741,40 +1691,38 @@ export default function AdminPage() {
         {activeTab === 'users' && (
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-sm p-6">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 flex-wrap">
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">Users Management</h2>
                   <p className="text-gray-600 mt-1">Manage system users and their roles</p>
                 </div>
-                <div className="flex gap-2 items-center">
-                  <div className="relative">
-                    <form onSubmit={handleUserSearch} className="relative">
-                      <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Search users..."
-                        value={userSearch}
-                        onChange={(e) => setUserSearch(e.target.value)}
-                        className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#38b36c] focus:border-transparent"
-                      />
-                    </form>
+                <div className="flex flex-col sm:flex-row flex-wrap gap-3 items-center w-full sm:w-auto">
+                  <form onSubmit={handleUserSearch} className="relative w-full sm:w-auto flex-1 min-w-[220px]">
+                    <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search users..."
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#38b36c] focus:border-transparent w-full"
+                    />
+                  </form>
+                  <button
+                    onClick={() => setShowAddUserModal(true)}
+                    className="inline-flex items-center px-4 py-2 bg-[#38b36c] text-white text-sm font-medium rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-colors duration-200"
+                  >
+                    Add User
+                  </button>
+                  {selectedUsers.length > 0 && (
                     <button
-                      onClick={() => setShowAddUserModal(true)}
-                      className="inline-flex items-center px-4 py-2 bg-[#38b36c] text-white text-sm font-medium rounded-lg hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#38b36c] transition-colors duration-200"
+                      onClick={() => setShowBulkDeleteConfirm({ type: 'user', count: selectedUsers.length })}
+                      className="inline-flex items-center px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200"
+                      disabled={isBulkDeleting}
                     >
-                      Add User
+                      <TrashIcon className="h-4 w-4 mr-2" />
+                      Delete Selected ({selectedUsers.length})
                     </button>
-                    {selectedUsers.length > 0 && (
-                      <button
-                        onClick={() => setShowBulkDeleteConfirm({ type: 'user', count: selectedUsers.length })}
-                        className="inline-flex items-center px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200"
-                        disabled={isBulkDeleting}
-                      >
-                        <TrashIcon className="h-4 w-4 mr-2" />
-                        Delete Selected ({selectedUsers.length})
-                      </button>
-                    )}
-                  </div>
+                  )}
                 </div>
               </div>
 
@@ -1836,7 +1784,9 @@ export default function AdminPage() {
                           <div className="flex-1">
                             <div className="flex items-center justify-between">
                               <div>
-                                <h3 className="text-lg font-semibold text-gray-900">{user.name}</h3>
+                                <h3 className="text-lg font-semibold text-gray-900">
+                                  <Link href={`/users/${user.id}`} className="text-[#38b36c] hover:underline">{user.name}</Link>
+                                </h3>
                                 <p className="text-sm text-gray-600">{user.email}</p>
                                 <p className="text-xs text-gray-500 mt-1">
                                   {user.user_type === 'student' ? 'NIM' : 'NIDN'}: {user.nim_nidn}
@@ -1907,6 +1857,13 @@ export default function AdminPage() {
                 />
               )}
             </div>
+            {usersTotalPages > 1 && (
+              <Pagination
+                currentPage={usersPage}
+                totalPages={usersTotalPages}
+                onPageChange={handleUsersPageChange}
+              />
+            )}
             {/* Edit User Modal */}
             {showUserForm && (
               <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
@@ -1968,13 +1925,17 @@ export default function AdminPage() {
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700">Faculty</label>
-                        <input
-                          type="text"
+                        <select
                           className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
                           value={userFormData.faculty || ''}
                           onChange={e => setUserFormData({ ...userFormData, faculty: e.target.value })}
                           required
-                        />
+                        >
+                          <option value="">Select Faculty</option>
+                          <option value="Fakultas Ekonomi">Fakultas Ekonomi</option>
+                          <option value="Fakultas Ilmu Komputer">Fakultas Ilmu Komputer</option>
+                          <option value="Fakultas Hukum">Fakultas Hukum</option>
+                        </select>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700">Department</label>
@@ -2004,6 +1965,16 @@ export default function AdminPage() {
                           value={userFormData.nim_nidn || ''}
                           onChange={e => setUserFormData({ ...userFormData, nim_nidn: e.target.value })}
                           required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Address</label>
+                        <textarea
+                          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-[#38b36c] focus:border-[#38b36c] sm:text-sm"
+                          rows={3}
+                          value={userFormData.address || ''}
+                          onChange={e => setUserFormData({ ...userFormData, address: e.target.value })}
+                          placeholder="Enter user address..."
                         />
                       </div>
                       <p className="text-xs text-gray-500 mt-1">
@@ -2046,39 +2017,14 @@ export default function AdminPage() {
             )}
             {/* Delete User Confirmation Modal */}
             {showDeleteUserConfirm && (
-              <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center p-4">
-                <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full">
-                  <div className="p-6">
-                    <div className="flex items-center justify-center mb-4">
-                      <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
-                        <ExclamationTriangleIcon className="h-6 w-6 text-red-600" />
-                      </div>
-                    </div>
-                    <div className="text-center">
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">
-                        Delete User
-                      </h3>
-                      <p className="text-sm text-gray-500 mb-6">
-                        Are you sure you want to delete user &quot;{showDeleteUserConfirm.name}&quot;? This action cannot be undone.
-                      </p>
-                      <div className="flex justify-center space-x-3">
-                        <button
-                          onClick={() => setShowDeleteUserConfirm(null)}
-                          className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={() => handleDeleteUser(showDeleteUserConfirm.id)}
-                          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <ConfirmDialog
+                isOpen={true}
+                title="Delete User"
+                message={`Are you sure you want to delete user '${showDeleteUserConfirm ? showDeleteUserConfirm.name : ''}'? This action cannot be undone.`}
+                isLoading={isBulkDeleting}
+                onClose={() => setShowDeleteUserConfirm(null)}
+                onConfirm={() => showDeleteUserConfirm && handleDeleteUser(showDeleteUserConfirm.id)}
+              />
             )}
           </div>
         )}

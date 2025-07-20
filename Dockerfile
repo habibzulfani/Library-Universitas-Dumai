@@ -11,7 +11,7 @@ ENV NEXT_FORCE_SWCPACKAGE=1
 RUN npm run build
 
 # Build backend
-FROM golang:1.21-alpine3.19 AS api
+FROM golang:1.24-alpine AS api
 WORKDIR /app
 # Update package repositories and install git
 RUN apk update && \

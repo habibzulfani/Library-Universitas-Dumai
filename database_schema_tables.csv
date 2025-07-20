@@ -1,0 +1,176 @@
+# Table: departments
+Name,data type,explanation
+id,BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+name,VARCHAR(255) NOT NULL,
+faculty,ENUM('Fakultas Ekonomi', 'Fakultas Ilmu Komputer', 'Fakultas Hukum') NOT NULL,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+
+# Table: users
+Name,data type,explanation
+id,BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+email,VARCHAR(255) NOT NULL,
+password_hash,VARCHAR(255) NOT NULL,
+name,VARCHAR(255) NOT NULL,
+role,ENUM('admin', 'user') DEFAULT 'user',
+user_type,ENUM('student', 'lecturer') DEFAULT 'student',
+nim_nidn,VARCHAR(50) NOT NULL,
+faculty,ENUM('Fakultas Ekonomi', 'Fakultas Ilmu Komputer', 'Fakultas Hukum') NOT NULL,
+department_id,BIGINT UNSIGNED NOT NULL,
+address,VARCHAR(500),
+profile_picture_url,VARCHAR(500),
+login_counter,INT DEFAULT 0,
+email_verified,BOOLEAN DEFAULT FALSE,
+verification_token,VARCHAR(255),
+is_approved,BOOLEAN DEFAULT FALSE,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+deleted_at,DATETIME(3) NULL DEFAULT NULL,
+
+# Table: password_reset_tokens
+Name,data type,explanation
+id,BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+user_id,BIGINT UNSIGNED NOT NULL,
+token,VARCHAR(255) NOT NULL UNIQUE,
+expires_at,DATETIME(3) NOT NULL,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+
+# Table: papers
+Name,data type,explanation
+id,BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+title,VARCHAR(500) NOT NULL,
+author,VARCHAR(255) NOT NULL,
+advisor,VARCHAR(255),
+university,VARCHAR(255),
+department,VARCHAR(255),
+year,INT,
+issn,VARCHAR(191),
+language,VARCHAR(100) DEFAULT 'English',
+journal,VARCHAR(255),
+volume,INT,
+issue,INT,
+pages,VARCHAR(50),
+doi,VARCHAR(255),
+abstract,TEXT,
+keywords,TEXT,
+file_url,VARCHAR(500),
+cover_image_url,VARCHAR(500),
+created_by,BIGINT UNSIGNED,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+
+# Table: books
+Name,data type,explanation
+id,BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+title,VARCHAR(500) NOT NULL,
+author,VARCHAR(255) NOT NULL,
+publisher,VARCHAR(255),
+published_year,INT,
+isbn,VARCHAR(50),
+subject,VARCHAR(255),
+language,VARCHAR(100) DEFAULT 'English',
+pages,VARCHAR(50),
+summary,TEXT,
+file_url,VARCHAR(500),
+cover_image_url,VARCHAR(500),
+created_by,BIGINT UNSIGNED,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+
+# Table: user_books
+Name,data type,explanation
+user_id,BIGINT UNSIGNED NOT NULL,
+book_id,BIGINT UNSIGNED NOT NULL,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+
+# Table: user_papers
+Name,data type,explanation
+user_id,BIGINT UNSIGNED NOT NULL,
+paper_id,BIGINT UNSIGNED NOT NULL,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+
+# Table: paper_authors
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+paper_id,BIGINT UNSIGNED NOT NULL,
+user_id,BIGINT UNSIGNED,
+author_name,LONGTEXT NOT NULL,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+
+# Table: book_authors
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+book_id,BIGINT UNSIGNED NOT NULL,
+user_id,BIGINT UNSIGNED,
+author_name,LONGTEXT NOT NULL,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+
+# Table: activity_logs
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+user_id,BIGINT UNSIGNED,
+action,LONGTEXT NOT NULL,
+item_id,BIGINT UNSIGNED,
+item_type,ENUM('book', 'paper') NULL,
+ip_address,VARCHAR(45),
+user_agent,TEXT,
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+
+# Table: counters
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+name,VARCHAR(255) NOT NULL UNIQUE,
+count,BIGINT DEFAULT 0,
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+
+# Table: categories
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+name,VARCHAR(255) NOT NULL,
+description,TEXT,
+type,ENUM('book', 'paper', 'both') DEFAULT 'both',
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+updated_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+
+# Table: book_categories
+Name,data type,explanation
+book_id,BIGINT UNSIGNED NOT NULL,
+category_id,BIGINT UNSIGNED NOT NULL,
+
+# Table: paper_categories
+Name,data type,explanation
+paper_id,BIGINT UNSIGNED NOT NULL,
+category_id,BIGINT UNSIGNED NOT NULL,
+
+# Table: file_uploads
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+filename,VARCHAR(255) NOT NULL,
+original_name,VARCHAR(255) NOT NULL,
+file_path,LONGTEXT NOT NULL,
+file_size,BIGINT,
+mime_type,VARCHAR(100),
+uploaded_by,BIGINT UNSIGNED,
+related_id,BIGINT UNSIGNED,
+related_type,ENUM('book', 'paper'),
+created_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+
+# Table: downloads
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+user_id,BIGINT UNSIGNED,
+item_id,BIGINT UNSIGNED NOT NULL,
+item_type,ENUM('book', 'paper') NOT NULL,
+ip_address,VARCHAR(45),
+user_agent,TEXT,
+downloaded_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+
+# Table: citations
+Name,data type,explanation
+id,BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+user_id,BIGINT UNSIGNED,
+item_id,BIGINT UNSIGNED NOT NULL,
+item_type,ENUM('book', 'paper') NOT NULL,
+cited_at,DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3), 

@@ -265,7 +265,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			return
 		}
 
-		profilePictureURL = &filePath
+		// Ensure leading slash for URL
+		urlPath := filePath
+		if !strings.HasPrefix(urlPath, "/") {
+			urlPath = "/" + urlPath
+		}
+		profilePictureURL = &urlPath
 	}
 
 	// Create user
@@ -309,7 +314,7 @@ func isValidEmail(email string) bool {
 
 func isValidNimNidn(nimNidn, userType string) bool {
 	if userType == "student" {
-		return regexp.MustCompile(`^\d{8}$`).MatchString(nimNidn)
+		return regexp.MustCompile(`^\d{6,}$`).MatchString(nimNidn)
 	}
 	return regexp.MustCompile(`^\d{10}$`).MatchString(nimNidn)
 }
@@ -445,7 +450,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Update login counter
 	user.LoginCounter++
-	h.db.Save(&user)
+	h.db.Model(&user).Update("login_counter", user.LoginCounter)
 
 	// Get department name for response
 	var department models.Department
@@ -593,14 +598,15 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 			return
 		}
 
-		// Delete old profile picture if exists
+		// Delete old profile picture if exists and not referenced by other users
 		if user.ProfilePictureURL != nil {
-			if err := os.Remove(*user.ProfilePictureURL); err != nil && !os.IsNotExist(err) {
-				log.Printf("Failed to delete old profile picture: %v", err)
-			}
+			log.Printf("[User Profile Update] Replacing old profile picture: %s", *user.ProfilePictureURL)
+			utils.DeleteFileIfUnreferenced(h.db, "users", "profile_picture_url", *user.ProfilePictureURL, user.ID)
 		}
 
-		user.ProfilePictureURL = &filePath
+		// Store only the relative URL for frontend use
+		relativeURL := "/" + filepath.ToSlash(filePath)
+		user.ProfilePictureURL = &relativeURL
 	}
 
 	if err := h.db.Save(&user).Error; err != nil {
@@ -721,11 +727,19 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// Send password reset email
+	// Always skip sending email and return token in local development
+	if strings.Contains(h.config.Server.BaseURL, "localhost") {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "If your email is registered, you will receive a password reset link",
+			"token":   resetToken.Token,
+		})
+		return
+	}
+
+	// Send password reset email in production
 	if err := h.sendPasswordResetEmail(user, resetToken.Token); err != nil {
 		log.Printf("Failed to send password reset email: %v", err)
 		// Don't return error here, just log it
-		// For testing purposes, still return the token in response
 		c.JSON(http.StatusOK, gin.H{
 			"message": "If your email is registered, you will receive a password reset link",
 			"token":   resetToken.Token, // Remove this in production
@@ -807,7 +821,7 @@ func (h *AuthHandler) GetPendingLecturers(c *gin.Context) {
 	}
 
 	var lecturers []models.User
-	if err := h.db.Where("user_type = ?", "lecturer").Find(&lecturers).Error; err != nil {
+	if err := h.db.Where("user_type = ? AND is_approved = ?", "lecturer", false).Find(&lecturers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch lecturers"})
 		return
 	}
@@ -897,13 +911,15 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 	}
 
 	var input struct {
-		Name       string  `json:"name"`
-		Email      string  `json:"email"`
-		Role       string  `json:"role"`
-		UserType   string  `json:"user_type"`
-		NIMNIDN    *string `json:"nim_nidn"`
-		Faculty    *string `json:"faculty"`
-		IsApproved bool    `json:"is_approved"`
+		Name         string  `json:"name"`
+		Email        string  `json:"email"`
+		Role         string  `json:"role"`
+		UserType     string  `json:"user_type"`
+		NIMNIDN      *string `json:"nim_nidn"`
+		Faculty      *string `json:"faculty"`
+		DepartmentID *uint   `json:"department_id"`
+		Address      *string `json:"address"`
+		IsApproved   bool    `json:"is_approved"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -918,6 +934,8 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 	user.UserType = input.UserType
 	user.NIMNIDN = input.NIMNIDN
 	user.Faculty = input.Faculty
+	user.DepartmentID = input.DepartmentID
+	user.Address = input.Address
 	user.IsApproved = input.IsApproved
 
 	if err := h.db.Save(&user).Error; err != nil {
@@ -968,12 +986,365 @@ func (h *AuthHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.Delete(&user).Error; err != nil {
+	log.Printf("[Admin User Delete] Deleting user ID: %s, Name: %s, Email: %s", id, user.Name, user.Email)
+
+	// Start a transaction to ensure data consistency
+	tx := h.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// 1. Delete all citations by this user
+	var citationCount int64
+	if err := tx.Model(&models.Citation{}).Where("user_id = ?", user.ID).Count(&citationCount).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count citations"})
+		return
+	}
+	if err := tx.Where("user_id = ?", user.ID).Delete(&models.Citation{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete citations"})
+		return
+	}
+	log.Printf("[Admin User Delete] Deleted %d citations by user", citationCount)
+
+	// 2. Delete all downloads by this user
+	var downloadCount int64
+	if err := tx.Model(&models.Download{}).Where("user_id = ?", user.ID).Count(&downloadCount).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count downloads"})
+		return
+	}
+	if err := tx.Where("user_id = ?", user.ID).Delete(&models.Download{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete downloads"})
+		return
+	}
+	log.Printf("[Admin User Delete] Deleted %d downloads by user", downloadCount)
+
+	// 3. Delete all books created by this user and their associated files
+	var books []models.Book
+	if err := tx.Where("created_by = ?", user.ID).Find(&books).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user's books"})
+		return
+	}
+
+	for _, book := range books {
+		log.Printf("[Admin User Delete] Deleting book: %s (ID: %d)", book.Title, book.ID)
+
+		// Delete book file if exists
+		if book.FileURL != nil {
+			utils.DeleteFileIfUnreferenced(tx, "books", "file_url", *book.FileURL, book.ID)
+		}
+
+		// Delete cover image if exists
+		if book.CoverImageURL != nil {
+			utils.DeleteFileIfUnreferenced(tx, "books", "cover_image_url", *book.CoverImageURL, book.ID)
+		}
+
+		// Delete book authors
+		if err := tx.Where("book_id = ?", book.ID).Delete(&models.BookAuthor{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete book authors"})
+			return
+		}
+
+		// Delete book categories (junction table)
+		if err := tx.Exec("DELETE FROM book_categories WHERE book_id = ?", book.ID).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete book categories"})
+			return
+		}
+	}
+
+	// Delete all books
+	if err := tx.Where("created_by = ?", user.ID).Delete(&models.Book{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user's books"})
+		return
+	}
+	log.Printf("[Admin User Delete] Deleted %d books by user", len(books))
+
+	// 4. Delete all papers created by this user and their associated files
+	var papers []models.Paper
+	if err := tx.Where("created_by = ?", user.ID).Find(&papers).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user's papers"})
+		return
+	}
+
+	for _, paper := range papers {
+		log.Printf("[Admin User Delete] Deleting paper: %s (ID: %d)", paper.Title, paper.ID)
+
+		// Delete paper file if exists
+		if paper.FileURL != nil {
+			utils.DeleteFileIfUnreferenced(tx, "papers", "file_url", *paper.FileURL, paper.ID)
+		}
+
+		// Delete cover image if exists
+		if paper.CoverImageURL != nil {
+			utils.DeleteFileIfUnreferenced(tx, "papers", "cover_image_url", *paper.CoverImageURL, paper.ID)
+		}
+
+		// Delete paper authors
+		if err := tx.Where("paper_id = ?", paper.ID).Delete(&models.PaperAuthor{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete paper authors"})
+			return
+		}
+
+		// Delete paper categories (junction table)
+		if err := tx.Exec("DELETE FROM paper_categories WHERE paper_id = ?", paper.ID).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete paper categories"})
+			return
+		}
+	}
+
+	// Delete all papers
+	if err := tx.Where("created_by = ?", user.ID).Delete(&models.Paper{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user's papers"})
+		return
+	}
+	log.Printf("[Admin User Delete] Deleted %d papers by user", len(papers))
+
+	// 5. Delete profile picture if exists and not referenced by other users
+	if user.ProfilePictureURL != nil {
+		log.Printf("[Admin User Delete] Checking profile picture deletion: %s", *user.ProfilePictureURL)
+		utils.DeleteFileIfUnreferenced(tx, "users", "profile_picture_url", *user.ProfilePictureURL, user.ID)
+	}
+
+	// 6. Delete the user
+	if err := tx.Delete(&user).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
+	// Commit the transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	log.Printf("[Admin User Delete] Successfully deleted user ID: %s with %d books, %d papers, %d citations, %d downloads",
+		id, len(books), len(papers), citationCount, downloadCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User deleted successfully",
+		"deleted_items": gin.H{
+			"books":     len(books),
+			"papers":    len(papers),
+			"citations": citationCount,
+			"downloads": downloadCount,
+		},
+	})
+}
+
+// BulkDeleteUsers handles deleting multiple users (admin only)
+func (h *AuthHandler) BulkDeleteUsers(c *gin.Context) {
+	// Check if the current user is an admin
+	userInterface, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	userObj := userInterface.(models.User)
+	if userObj.Role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins can delete users"})
+		return
+	}
+
+	var req struct {
+		UserIDs []uint `json:"user_ids" binding:"required,min=1,max=100"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Printf("[Admin Bulk User Delete] Attempting to delete %d users: %v", len(req.UserIDs), req.UserIDs)
+
+	// Start a transaction for the entire bulk operation
+	tx := h.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var totalDeleted struct {
+		Users     int
+		Books     int
+		Papers    int
+		Citations int
+		Downloads int
+	}
+
+	// Process each user
+	for _, userID := range req.UserIDs {
+		var user database.User
+		if err := tx.First(&user, userID).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("User with ID %d not found", userID)})
+			return
+		}
+
+		log.Printf("[Admin Bulk User Delete] Deleting user ID: %d, Name: %s, Email: %s", userID, user.Name, user.Email)
+
+		// 1. Delete all citations by this user
+		var citationCount int64
+		if err := tx.Model(&models.Citation{}).Where("user_id = ?", user.ID).Count(&citationCount).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count citations"})
+			return
+		}
+		if err := tx.Where("user_id = ?", user.ID).Delete(&models.Citation{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete citations"})
+			return
+		}
+		totalDeleted.Citations += int(citationCount)
+
+		// 2. Delete all downloads by this user
+		var downloadCount int64
+		if err := tx.Model(&models.Download{}).Where("user_id = ?", user.ID).Count(&downloadCount).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count downloads"})
+			return
+		}
+		if err := tx.Where("user_id = ?", user.ID).Delete(&models.Download{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete downloads"})
+			return
+		}
+		totalDeleted.Downloads += int(downloadCount)
+
+		// 3. Delete all books created by this user and their associated files
+		var books []models.Book
+		if err := tx.Where("created_by = ?", user.ID).Find(&books).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user's books"})
+			return
+		}
+
+		for _, book := range books {
+			// Delete book file if exists
+			if book.FileURL != nil {
+				utils.DeleteFileIfUnreferenced(tx, "books", "file_url", *book.FileURL, book.ID)
+			}
+
+			// Delete cover image if exists
+			if book.CoverImageURL != nil {
+				utils.DeleteFileIfUnreferenced(tx, "books", "cover_image_url", *book.CoverImageURL, book.ID)
+			}
+
+			// Delete book authors
+			if err := tx.Where("book_id = ?", book.ID).Delete(&models.BookAuthor{}).Error; err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete book authors"})
+				return
+			}
+
+			// Delete book categories (junction table)
+			if err := tx.Exec("DELETE FROM book_categories WHERE book_id = ?", book.ID).Error; err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete book categories"})
+				return
+			}
+		}
+
+		// Delete all books
+		if err := tx.Where("created_by = ?", user.ID).Delete(&models.Book{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user's books"})
+			return
+		}
+		totalDeleted.Books += len(books)
+
+		// 4. Delete all papers created by this user and their associated files
+		var papers []models.Paper
+		if err := tx.Where("created_by = ?", user.ID).Find(&papers).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user's papers"})
+			return
+		}
+
+		for _, paper := range papers {
+			// Delete paper file if exists
+			if paper.FileURL != nil {
+				utils.DeleteFileIfUnreferenced(tx, "papers", "file_url", *paper.FileURL, paper.ID)
+			}
+
+			// Delete cover image if exists
+			if paper.CoverImageURL != nil {
+				utils.DeleteFileIfUnreferenced(tx, "papers", "cover_image_url", *paper.CoverImageURL, paper.ID)
+			}
+
+			// Delete paper authors
+			if err := tx.Where("paper_id = ?", paper.ID).Delete(&models.PaperAuthor{}).Error; err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete paper authors"})
+				return
+			}
+
+			// Delete paper categories (junction table)
+			if err := tx.Exec("DELETE FROM paper_categories WHERE paper_id = ?", paper.ID).Error; err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete paper categories"})
+				return
+			}
+		}
+
+		// Delete all papers
+		if err := tx.Where("created_by = ?", user.ID).Delete(&models.Paper{}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user's papers"})
+			return
+		}
+		totalDeleted.Papers += len(papers)
+
+		// 5. Delete profile picture if exists and not referenced by other users
+		if user.ProfilePictureURL != nil {
+			utils.DeleteFileIfUnreferenced(tx, "users", "profile_picture_url", *user.ProfilePictureURL, user.ID)
+		}
+
+		// 6. Delete the user
+		if err := tx.Delete(&user).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
+			return
+		}
+		totalDeleted.Users++
+	}
+
+	// Commit the transaction
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	log.Printf("[Admin Bulk User Delete] Successfully deleted %d users with %d books, %d papers, %d citations, %d downloads",
+		totalDeleted.Users, totalDeleted.Books, totalDeleted.Papers, totalDeleted.Citations, totalDeleted.Downloads)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Successfully deleted %d users", totalDeleted.Users),
+		"deleted_items": gin.H{
+			"users":     totalDeleted.Users,
+			"books":     totalDeleted.Books,
+			"papers":    totalDeleted.Papers,
+			"citations": totalDeleted.Citations,
+			"downloads": totalDeleted.Downloads,
+		},
+	})
 }
 
 // GetDepartments handles fetching departments based on faculty
@@ -1004,4 +1375,23 @@ func (h *AuthHandler) sendVerificationEmail(user models.User) error {
 func (h *AuthHandler) sendPasswordResetEmail(user models.User, token string) error {
 	emailConfig := configs.NewEmailConfig()
 	return utils.SendPasswordResetEmail(user.Email, token, emailConfig)
+}
+
+// GetPublicUser returns public user info by ID (no sensitive fields)
+func (h *AuthHandler) GetPublicUser(c *gin.Context) {
+	id := c.Param("id")
+	var user models.User
+	if err := h.db.Preload("Department").First(&user, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":                  user.ID,
+		"name":                user.Name,
+		"faculty":             user.Faculty,
+		"department_id":       user.DepartmentID,
+		"department":          user.Department,
+		"profile_picture_url": user.ProfilePictureURL,
+		"user_type":           user.UserType,
+	})
 }

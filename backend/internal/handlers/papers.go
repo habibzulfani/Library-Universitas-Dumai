@@ -13,6 +13,7 @@ import (
 
 	"e-repository-api/configs"
 	"e-repository-api/internal/models"
+	"e-repository-api/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -43,12 +44,15 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 	// Extract form fields
 	paper.Title = c.PostForm("title")
 	authors := c.PostFormArray("authors[]")
+	log.Printf("Received authors array: %v", authors)
 	if len(authors) == 0 {
 		// Fallback to single author if no authors array is provided
 		if author := c.PostForm("author"); author != "" {
 			authors = []string{author}
+			log.Printf("Fallback to single author: %s", author)
 		}
 	}
+	log.Printf("Final authors array: %v", authors)
 
 	// Handle optional string fields
 	if advisor := c.PostForm("advisor"); advisor != "" {
@@ -71,6 +75,9 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 	}
 	if issn := c.PostForm("issn"); issn != "" {
 		paper.ISSN = &issn
+	}
+	if language := c.PostForm("language"); language != "" {
+		paper.Language = &language
 	}
 	if doi := c.PostForm("doi"); doi != "" {
 		paper.DOI = &doi
@@ -140,6 +147,34 @@ func (h *PaperHandler) CreatePaper(c *gin.Context) {
 		paper.FileURL = &fileURL
 	}
 
+	// Handle cover image upload
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
+
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
+			return
+		}
+
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
+
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
+			return
+		}
+
+		// Save file paths relative to uploads directory
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
+		paper.CoverImageURL = &coverImageURL
+	}
+
 	// Start a transaction
 	tx := h.db.Begin()
 	if tx.Error != nil {
@@ -197,12 +232,15 @@ func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 	// Extract form fields
 	paper.Title = c.PostForm("title")
 	authors := c.PostFormArray("authors[]")
+	log.Printf("Received authors array: %v", authors)
 	if len(authors) == 0 {
 		// Fallback to single author if no authors array is provided
 		if author := c.PostForm("author"); author != "" {
 			authors = []string{author}
+			log.Printf("Fallback to single author: %s", author)
 		}
 	}
+	log.Printf("Final authors array: %v", authors)
 
 	// Handle optional string fields
 	if advisor := c.PostForm("advisor"); advisor != "" {
@@ -225,6 +263,9 @@ func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 	}
 	if issn := c.PostForm("issn"); issn != "" {
 		paper.ISSN = &issn
+	}
+	if language := c.PostForm("language"); language != "" {
+		paper.Language = &language
 	}
 	if doi := c.PostForm("doi"); doi != "" {
 		paper.DOI = &doi
@@ -300,29 +341,30 @@ func (h *PaperHandler) CreateUserPaper(c *gin.Context) {
 	paper.FileURL = &fileURL
 
 	// Handle cover image upload
-	if coverImage, header, err := c.Request.FormFile("coverImage"); err == nil {
-		defer coverImage.Close()
+	coverFile, coverHeader, err := c.Request.FormFile("cover_image")
+	if err == nil {
+		defer coverFile.Close()
 
-		// Create cover images directory if it doesn't exist
-		coverDir := "uploads/covers"
-		if err := os.MkdirAll(coverDir, 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create cover directory"})
+		// Create uploads directory if it doesn't exist
+		uploadDir := "uploads/covers"
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory"})
 			return
 		}
 
-		// Generate unique filename for cover
-		ext := filepath.Ext(header.Filename)
-		filename := fmt.Sprintf("%d_%s_cover%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
-		coverPath := filepath.Join(coverDir, filename)
+		// Generate unique filename
+		ext := filepath.Ext(coverHeader.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().Unix(), strings.ReplaceAll(paper.Title, " ", "_"), ext)
+		filePath := filepath.Join(uploadDir, filename)
 
-		// Save cover image
-		if err := c.SaveUploadedFile(header, coverPath); err != nil {
+		// Save file
+		if err := c.SaveUploadedFile(coverHeader, filePath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save cover image"})
 			return
 		}
 
 		// Save file paths relative to uploads directory
-		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(coverPath))
+		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
 		paper.CoverImageURL = &coverImageURL
 	}
 
@@ -378,6 +420,11 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 		return
 	}
 
+	// Support both 'query' and 'search' as search parameters
+	q := req.Query
+	if q == "" {
+		q = c.Query("search")
+	}
 	// Set defaults
 	if req.Page <= 0 {
 		req.Page = 1
@@ -392,10 +439,10 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 	query := h.db.Model(&models.Paper{}).Unscoped()
 
 	// Search functionality
-	if req.Query != "" {
-		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ? OR LOWER(issn) LIKE ? OR CAST(year AS CHAR) LIKE ?",
-			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	if q != "" {
+		searchTerm := "%" + strings.ToLower(q) + "%"
+		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ? OR LOWER(issn) LIKE ? OR LOWER(doi) LIKE ? OR CAST(year AS CHAR) LIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Category filter
@@ -408,6 +455,11 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 	// Year filter
 	if req.Year != nil {
 		query = query.Where("year = ?", *req.Year)
+	}
+
+	// After year filter
+	if createdBy := c.Query("created_by"); createdBy != "" {
+		query = query.Where("created_by = ?", createdBy)
 	}
 
 	// Get total count
@@ -436,9 +488,60 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 		query = query.Order("created_at DESC")
 	}
 
-	if err := query.Offset(offset).Limit(req.Limit).Find(&papers).Error; err != nil {
+	if err := query.Preload("Authors").Offset(offset).Limit(req.Limit).Find(&papers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get papers"})
 		return
+	}
+
+	// Format each paper to include authors array like GetPaper
+	var formattedPapers []gin.H
+	for _, paper := range papers {
+		item := gin.H{
+			"id":              paper.ID,
+			"title":           paper.Title,
+			"author":          paper.Author,
+			"authors":         make([]gin.H, 0),
+			"advisor":         paper.Advisor,
+			"university":      paper.University,
+			"department":      paper.Department,
+			"year":            paper.Year,
+			"issn":            paper.ISSN,
+			"journal":         paper.Journal,
+			"volume":          paper.Volume,
+			"issue":           paper.Issue,
+			"pages":           paper.Pages,
+			"doi":             paper.DOI,
+			"abstract":        paper.Abstract,
+			"keywords":        paper.Keywords,
+			"file_url":        paper.FileURL,
+			"cover_image_url": paper.CoverImageURL,
+			"created_by":      paper.CreatedBy,
+			"created_at":      paper.CreatedAt,
+			"updated_at":      paper.UpdatedAt,
+			"language":        paper.Language,
+		}
+		for _, author := range paper.Authors {
+			item["authors"] = append(item["authors"].([]gin.H), gin.H{
+				"id":          author.ID,
+				"author_name": author.AuthorName,
+			})
+		}
+		// Convert file URLs to full URLs if they exist
+		if paper.FileURL != nil {
+			fileURL := *paper.FileURL
+			if !strings.HasPrefix(fileURL, "http") {
+				fileURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, fileURL)
+				item["file_url"] = fileURL
+			}
+		}
+		if paper.CoverImageURL != nil {
+			coverURL := *paper.CoverImageURL
+			if !strings.HasPrefix(coverURL, "http") {
+				coverURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, coverURL)
+				item["cover_image_url"] = coverURL
+			}
+		}
+		formattedPapers = append(formattedPapers, item)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -446,7 +549,7 @@ func (h *PaperHandler) GetPapers(c *gin.Context) {
 		"page":        req.Page,
 		"limit":       req.Limit,
 		"total_pages": int(math.Ceil(float64(total) / float64(req.Limit))),
-		"data":        papers,
+		"data":        formattedPapers,
 	})
 }
 
@@ -484,6 +587,7 @@ func (h *PaperHandler) GetPaper(c *gin.Context) {
 		"created_by":      paper.CreatedBy,
 		"created_at":      paper.CreatedAt,
 		"updated_at":      paper.UpdatedAt,
+		"language":        paper.Language,
 	}
 
 	// Add authors to the response
@@ -573,6 +677,9 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 	if issn := c.PostForm("issn"); issn != "" {
 		paper.ISSN = &issn
 	}
+	if language := c.PostForm("language"); language != "" {
+		paper.Language = &language
+	}
 	if doi := c.PostForm("doi"); doi != "" {
 		paper.DOI = &doi
 	}
@@ -620,17 +727,9 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 			return
 		}
 
-		// Delete old file if exists
+		// Delete old file if exists and not referenced by other papers
 		if paper.FileURL != nil {
-			oldFilePath := *paper.FileURL
-			// Remove base URL if present
-			if strings.HasPrefix(oldFilePath, h.config.Server.BaseURL) {
-				oldFilePath = strings.TrimPrefix(oldFilePath, h.config.Server.BaseURL)
-				oldFilePath = strings.TrimPrefix(oldFilePath, "/")
-			}
-			if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
-				log.Printf("Failed to delete old file: %v", err)
-			}
+			utils.DeleteFileIfUnreferenced(h.db, "papers", "file_url", *paper.FileURL, paper.ID)
 		}
 
 		// Save file paths relative to uploads directory
@@ -661,17 +760,9 @@ func (h *PaperHandler) UpdatePaper(c *gin.Context) {
 			return
 		}
 
-		// Delete old cover if exists
+		// Delete old cover if exists and not referenced by other papers
 		if paper.CoverImageURL != nil {
-			oldCoverPath := *paper.CoverImageURL
-			// Remove base URL if present
-			if strings.HasPrefix(oldCoverPath, h.config.Server.BaseURL) {
-				oldCoverPath = strings.TrimPrefix(oldCoverPath, h.config.Server.BaseURL)
-				oldCoverPath = strings.TrimPrefix(oldCoverPath, "/")
-			}
-			if err := os.Remove(oldCoverPath); err != nil && !os.IsNotExist(err) {
-				log.Printf("Failed to delete old cover: %v", err)
-			}
+			utils.DeleteFileIfUnreferenced(h.db, "papers", "cover_image_url", *paper.CoverImageURL, paper.ID)
 		}
 
 		// Save file paths relative to uploads directory
@@ -738,11 +829,13 @@ func (h *PaperHandler) DeletePaper(c *gin.Context) {
 		return
 	}
 
-	// Delete file if exists
+	// Delete file if exists and not referenced by other papers
 	if paper.FileURL != nil {
-		if err := os.Remove(*paper.FileURL); err != nil && !os.IsNotExist(err) {
-			log.Printf("Failed to delete file: %v", err)
-		}
+		utils.DeleteFileIfUnreferenced(h.db, "papers", "file_url", *paper.FileURL, paper.ID)
+	}
+	// Delete cover image if exists and not referenced by other papers
+	if paper.CoverImageURL != nil {
+		utils.DeleteFileIfUnreferenced(h.db, "papers", "cover_image_url", *paper.CoverImageURL, paper.ID)
 	}
 
 	// Delete from database
@@ -774,17 +867,17 @@ func (h *PaperHandler) DownloadPaper(c *gin.Context) {
 		return
 	}
 
-	// Check if user is authenticated
+	// Check if user is authenticated (optional for public downloads)
 	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
-		return
+	var userID *uint
+	if exists {
+		uid := userIDVal.(uint)
+		userID = &uid
 	}
-	userID := userIDVal.(uint)
 
 	// Log the download
 	download := models.Download{
-		UserID:       &userID,
+		UserID:       userID,
 		ItemID:       paper.ID,
 		ItemType:     "paper",
 		IPAddress:    nil,
@@ -844,6 +937,18 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 		return
 	}
 
+	// Get user ID from context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	// Support both 'query' and 'search' as search parameters
+	q := req.Query
+	if q == "" {
+		q = c.Query("search")
+	}
 	// Set defaults
 	if req.Page <= 0 {
 		req.Page = 1
@@ -855,20 +960,13 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 		req.Limit = 100
 	}
 
-	// Get user ID from context
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
-		return
-	}
-
 	query := h.db.Model(&models.Paper{}).Unscoped().Where("created_by = ?", userID)
 
 	// Search functionality
-	if req.Query != "" {
-		searchTerm := "%" + strings.ToLower(req.Query) + "%"
-		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ? OR LOWER(issn) LIKE ? OR CAST(year AS CHAR) LIKE ?",
-			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+	if q != "" {
+		searchTerm := "%" + strings.ToLower(q) + "%"
+		query = query.Where("LOWER(title) LIKE ? OR LOWER(author) LIKE ? OR LOWER(abstract) LIKE ? OR LOWER(keywords) LIKE ? OR LOWER(issn) LIKE ? OR LOWER(doi) LIKE ? OR CAST(year AS CHAR) LIKE ?",
+			searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	// Category filter
@@ -893,21 +991,60 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 	// Get paginated results
 	var papers []models.Paper
 	offset := (req.Page - 1) * req.Limit
-	if err := query.Offset(offset).Limit(req.Limit).Find(&papers).Error; err != nil {
+	if err := query.Preload("Authors").Offset(offset).Limit(req.Limit).Find(&papers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get papers"})
 		return
 	}
 
-	// Convert file URLs to full URLs
-	for i := range papers {
-		if papers[i].FileURL != nil {
-			fileURL := fmt.Sprintf("%s/%s", h.config.Server.BaseURL, *papers[i].FileURL)
-			papers[i].FileURL = &fileURL
+	// Format each paper to include authors array like GetPaper
+	var formattedPapers []gin.H
+	for _, paper := range papers {
+		item := gin.H{
+			"id":              paper.ID,
+			"title":           paper.Title,
+			"author":          paper.Author,
+			"authors":         make([]gin.H, 0),
+			"advisor":         paper.Advisor,
+			"university":      paper.University,
+			"department":      paper.Department,
+			"year":            paper.Year,
+			"issn":            paper.ISSN,
+			"journal":         paper.Journal,
+			"volume":          paper.Volume,
+			"issue":           paper.Issue,
+			"pages":           paper.Pages,
+			"doi":             paper.DOI,
+			"abstract":        paper.Abstract,
+			"keywords":        paper.Keywords,
+			"file_url":        paper.FileURL,
+			"cover_image_url": paper.CoverImageURL,
+			"created_by":      paper.CreatedBy,
+			"created_at":      paper.CreatedAt,
+			"updated_at":      paper.UpdatedAt,
+			"language":        paper.Language,
 		}
-		if papers[i].CoverImageURL != nil {
-			coverURL := fmt.Sprintf("%s/%s", h.config.Server.BaseURL, *papers[i].CoverImageURL)
-			papers[i].CoverImageURL = &coverURL
+		for _, author := range paper.Authors {
+			item["authors"] = append(item["authors"].([]gin.H), gin.H{
+				"id":          author.ID,
+				"author_name": author.AuthorName,
+			})
 		}
+		// Convert file URLs to full URLs if they exist
+		if paper.FileURL != nil {
+			fileURL := *paper.FileURL
+			if !strings.HasPrefix(fileURL, "http") {
+				fileURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, fileURL)
+				item["file_url"] = fileURL
+			}
+		}
+		if paper.CoverImageURL != nil {
+			coverURL := *paper.CoverImageURL
+			if !strings.HasPrefix(coverURL, "http") {
+				coverURL = fmt.Sprintf("%s%s", h.config.Server.BaseURL, coverURL)
+				item["cover_image_url"] = coverURL
+			}
+		}
+		formattedPapers = append(formattedPapers, item)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -915,7 +1052,7 @@ func (h *PaperHandler) GetUserPapers(c *gin.Context) {
 		"page":        req.Page,
 		"limit":       req.Limit,
 		"total_pages": int(math.Ceil(float64(total) / float64(req.Limit))),
-		"data":        papers,
+		"data":        formattedPapers,
 	})
 }
 
@@ -998,6 +1135,9 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 	if issn := c.PostForm("issn"); issn != "" {
 		paper.ISSN = &issn
 	}
+	if language := c.PostForm("language"); language != "" {
+		paper.Language = &language
+	}
 	if doi := c.PostForm("doi"); doi != "" {
 		paper.DOI = &doi
 	}
@@ -1045,22 +1185,16 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 			return
 		}
 
-		// Delete old file if exists
+		// Delete old file if exists and not referenced by other papers
 		if paper.FileURL != nil {
-			oldFilePath := *paper.FileURL
-			// Remove base URL if present
-			if strings.HasPrefix(oldFilePath, h.config.Server.BaseURL) {
-				oldFilePath = strings.TrimPrefix(oldFilePath, h.config.Server.BaseURL)
-				oldFilePath = strings.TrimPrefix(oldFilePath, "/")
-			}
-			if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
-				log.Printf("Failed to delete old file: %v", err)
-			}
+			log.Printf("[User Paper Update] Replacing old file: %s", *paper.FileURL)
+			utils.DeleteFileIfUnreferenced(h.db, "papers", "file_url", *paper.FileURL, paper.ID)
 		}
 
 		// Save file paths relative to uploads directory
 		fileURL := fmt.Sprintf("/uploads/papers/%s", filepath.Base(filePath))
 		paper.FileURL = &fileURL
+		log.Printf("[User Paper Update] New file saved: %s", fileURL)
 	}
 
 	// Handle cover image upload
@@ -1086,22 +1220,16 @@ func (h *PaperHandler) UpdateUserPaper(c *gin.Context) {
 			return
 		}
 
-		// Delete old cover if exists
+		// Delete old cover if exists and not referenced by other papers
 		if paper.CoverImageURL != nil {
-			oldCoverPath := *paper.CoverImageURL
-			// Remove base URL if present
-			if strings.HasPrefix(oldCoverPath, h.config.Server.BaseURL) {
-				oldCoverPath = strings.TrimPrefix(oldCoverPath, h.config.Server.BaseURL)
-				oldCoverPath = strings.TrimPrefix(oldCoverPath, "/")
-			}
-			if err := os.Remove(oldCoverPath); err != nil && !os.IsNotExist(err) {
-				log.Printf("Failed to delete old cover: %v", err)
-			}
+			log.Printf("[User Paper Update] Replacing old cover: %s", *paper.CoverImageURL)
+			utils.DeleteFileIfUnreferenced(h.db, "papers", "cover_image_url", *paper.CoverImageURL, paper.ID)
 		}
 
 		// Save file paths relative to uploads directory
 		coverImageURL := fmt.Sprintf("/uploads/covers/%s", filepath.Base(filePath))
 		paper.CoverImageURL = &coverImageURL
+		log.Printf("[User Paper Update] New cover saved: %s", coverImageURL)
 	}
 
 	// Start a transaction
@@ -1174,11 +1302,17 @@ func (h *PaperHandler) DeleteUserPaper(c *gin.Context) {
 		return
 	}
 
-	// Delete file if exists
+	log.Printf("[User Paper Delete] Deleting paper ID: %s, Title: %s", id, paper.Title)
+
+	// Delete file if exists and not referenced by other papers
 	if paper.FileURL != nil {
-		if err := os.Remove(*paper.FileURL); err != nil && !os.IsNotExist(err) {
-			log.Printf("Failed to delete file: %v", err)
-		}
+		log.Printf("[User Paper Delete] Checking file deletion for: %s", *paper.FileURL)
+		utils.DeleteFileIfUnreferenced(h.db, "papers", "file_url", *paper.FileURL, paper.ID)
+	}
+	// Delete cover image if exists and not referenced by other papers
+	if paper.CoverImageURL != nil {
+		log.Printf("[User Paper Delete] Checking cover deletion for: %s", *paper.CoverImageURL)
+		utils.DeleteFileIfUnreferenced(h.db, "papers", "cover_image_url", *paper.CoverImageURL, paper.ID)
 	}
 
 	// Delete from database
@@ -1190,5 +1324,37 @@ func (h *PaperHandler) DeleteUserPaper(c *gin.Context) {
 	// Update paper count
 	h.db.Model(&models.Counter{}).Where("name = ?", "total_papers").UpdateColumn("count", gorm.Expr("count - 1"))
 
+	log.Printf("[User Paper Delete] Successfully deleted paper ID: %s", id)
 	c.JSON(http.StatusOK, gin.H{"message": "Paper deleted successfully"})
+}
+
+// CitePaper handles citation logging for a paper
+func (h *PaperHandler) CitePaper(c *gin.Context) {
+	id := c.Param("id")
+	var paper models.Paper
+
+	// Check if paper exists
+	if err := h.db.Unscoped().First(&paper, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Paper not found"})
+		return
+	}
+
+	// Check if user is authenticated (optional for public citations)
+	userIDVal, exists := c.Get("user_id")
+	var userID *uint
+	if exists {
+		uid := userIDVal.(uint)
+		userID = &uid
+	}
+
+	// Log the citation
+	citation := models.Citation{
+		UserID:   userID,
+		ItemID:   paper.ID,
+		ItemType: "paper",
+		CitedAt:  time.Now(),
+	}
+	h.db.Create(&citation)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Citation logged"})
 }

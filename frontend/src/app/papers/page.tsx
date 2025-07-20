@@ -8,6 +8,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import PaperForm from '@/components/forms/PaperForm';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import SearchBar from '@/components/ui/SearchBar';
+import Pagination from '@/components/ui/Pagination';
 
 export default function PapersPage() {
   const { user } = useAuth();
@@ -48,7 +50,7 @@ export default function PapersPage() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setCurrentPage(1);
-    fetchPapers({ query: searchQuery, page: 1 });
+    // Do not call fetchPapers here; useEffect will handle it
   };
 
   const handlePageChange = (page: number) => {
@@ -56,9 +58,17 @@ export default function PapersPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleEditPaper = (paper: Paper) => {
-    setEditingPaper(paper);
-    setShowPaperForm(true);
+  const handleEditPaper = async (paper: Paper) => {
+    try {
+      // Fetch the full paper data including authors
+      const response = await papersAPI.getPaper(paper.id);
+      const fullPaper = response;
+      setEditingPaper(fullPaper);
+      setShowPaperForm(true);
+    } catch (error: any) {
+      console.error('Error loading paper details:', error);
+      toast.error('Failed to load paper details');
+    }
   };
 
   const handlePaperSuccess = () => {
@@ -79,7 +89,11 @@ export default function PapersPage() {
 
     setIsDeleting(true);
     try {
-      await papersAPI.deleteUserPaper(showDeleteConfirm.id);
+      if (user?.role === 'admin') {
+        await papersAPI.deletePaper(showDeleteConfirm.id);
+      } else {
+        await papersAPI.deleteUserPaper(showDeleteConfirm.id);
+      }
       toast.success('Paper deleted successfully');
       fetchPapers();
     } catch (error) {
@@ -116,28 +130,14 @@ export default function PapersPage() {
 
         {/* Search */}
         <div className="mb-8">
-          <form onSubmit={handleSearch} className="max-w-2xl">
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                type="search"
-                placeholder="Search papers by title, author, abstract, or keywords..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-[#4cae8a] focus:border-[#4cae8a]"
-              />
-              <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                <button
-                  type="submit"
-                  className="bg-[#4cae8a] text-white px-4 py-2 rounded-md hover:bg-[#357a5b] focus:outline-none focus:ring-2 focus:ring-[#4cae8a]"
-                >
-                  Search
-                </button>
-              </div>
-            </div>
-          </form>
+          <SearchBar
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onSubmit={handleSearch}
+            placeholder="Search papers by title, author, abstract, keywords, or DOI..."
+            buttonLabel="Search"
+            className="max-w-2xl"
+          />
         </div>
 
         {/* Results count */}
@@ -265,41 +265,11 @@ export default function PapersPage() {
         {/* Pagination */}
         {totalPages > 1 && (
           <div className="mt-12 flex justify-center">
-            <nav className="flex items-center space-x-2">
-              <button
-                onClick={() => handlePageChange(currentPage - 1)}
-                disabled={currentPage === 1}
-                className="px-3 py-2 rounded-md text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-
-              {[...Array(Math.min(5, totalPages))].map((_, i) => {
-                const page = i + Math.max(1, currentPage - 2);
-                if (page > totalPages) return null;
-
-                return (
-                  <button
-                    key={page}
-                    onClick={() => handlePageChange(page)}
-                    className={`px-3 py-2 rounded-md text-sm font-medium ${currentPage === page
-                      ? 'bg-[#4cae8a] text-white'
-                      : 'text-gray-700 hover:text-[#4cae8a]'
-                      }`}
-                  >
-                    {page}
-                  </button>
-                );
-              })}
-
-              <button
-                onClick={() => handlePageChange(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                className="px-3 py-2 rounded-md text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </nav>
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={handlePageChange}
+            />
           </div>
         )}
 

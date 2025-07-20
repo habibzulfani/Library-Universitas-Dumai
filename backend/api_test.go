@@ -280,7 +280,7 @@ func (suite *APIIntegrationTestSuite) TestBooksWorkflow() {
 		PublishedYear: &[]int{2024}[0],
 		Subject:       &[]string{"Testing"}[0],
 		Language:      &[]string{"English"}[0],
-		Pages:         &[]int{100}[0],
+		Pages:         stringPtr("100"),
 		Summary:       &[]string{"A book for integration testing"}[0],
 	}
 

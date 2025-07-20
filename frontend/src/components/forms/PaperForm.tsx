@@ -1,9 +1,11 @@
 import Image from 'next/image';
 import { DocumentTextIcon } from '@heroicons/react/24/outline';
 import { XMarkIcon } from '@heroicons/react/24/outline';
-import { PlusIcon, XCircleIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, XCircleIcon, SparklesIcon } from '@heroicons/react/24/outline';
 import { usePaperForm } from '@/hooks/usePaperForm';
 import { Paper } from '@/lib/api';
+import MetadataExtractor from './MetadataExtractor';
+import { useEffect } from 'react';
 
 interface PaperFormProps {
     editingPaper?: Paper | null;
@@ -38,6 +40,35 @@ export default function PaperForm({
         isAdmin,
     });
 
+    // Debug effect to monitor paperFormData changes
+    useEffect(() => {
+        console.log('PaperForm: paperFormData changed:', paperFormData);
+    }, [paperFormData]);
+
+    const handleMetadataExtracted = (metadata: any, file?: File) => {
+        // Robust mapping and type conversion
+        setPaperFormData(prev => ({
+            ...prev,
+            title: metadata.title || "",
+            abstract: metadata.abstract || "",
+            keywords: Array.isArray(metadata.keywords) ? metadata.keywords.join(", ") : (metadata.keywords || ""),
+            advisor: metadata.advisor || "",
+            university: metadata.university || "",
+            department: metadata.department || "",
+            year: metadata.year ? String(metadata.year) : "",
+            journal: metadata.journal || "",
+            volume: metadata.volume ? String(metadata.volume) : "",
+            issue: metadata.issue ? String(metadata.issue) : "",
+            pages: metadata.pages || "",
+            doi: metadata.doi || "",
+            issn: metadata.issn || "",
+            language: metadata.language || "",
+            author: Array.isArray(metadata.authors) && metadata.authors.length > 0 ? metadata.authors[0] : "",
+            authors: Array.isArray(metadata.authors) ? metadata.authors : [],
+            file: file || prev.file,
+        }));
+    };
+
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         setPaperFormData({ ...paperFormData, [name]: value });
@@ -45,9 +76,7 @@ export default function PaperForm({
 
     const handleFormSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (paperFormData.author.trim() && !paperFormData.authors.includes(paperFormData.author.trim())) {
-            handleAddAuthor();
-        }
+        // Don't automatically add author from input field - user must click Add button
         handlePaperSubmit(e);
     };
 
@@ -61,6 +90,18 @@ export default function PaperForm({
                     </button>
                 </div>
                 <form onSubmit={handleFormSubmit} className="space-y-6">
+                    {/* Metadata Extractor */}
+                    <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="flex items-center gap-2 mb-3">
+                            <SparklesIcon className="h-5 w-5 text-blue-500" />
+                            <h3 className="text-lg font-medium text-gray-900">Auto-fill with AI</h3>
+                        </div>
+                        <MetadataExtractor
+                            onMetadataExtracted={handleMetadataExtracted}
+                            disabled={isSubmitting}
+                        />
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -84,12 +125,11 @@ export default function PaperForm({
                                 <input
                                     type="text"
                                     name="author"
+                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[#4cae8a] focus:border-[#4cae8a]"
                                     value={paperFormData.author}
                                     onChange={handleChange}
                                     onKeyDown={handleKeyPress}
-                                    required={paperFormData.authors.length === 0}
-                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[#4cae8a] focus:border-[#4cae8a]"
-                                    placeholder="Add author name"
+                                    placeholder="Type author name and click Add"
                                 />
                                 <button
                                     type="button"
@@ -266,6 +306,27 @@ export default function PaperForm({
                                 onChange={handleChange}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[#4cae8a] focus:border-[#4cae8a]"
                             />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Language</label>
+                            <select
+                                name="language"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-[#4cae8a] focus:border-[#4cae8a]"
+                                value={paperFormData.language}
+                                onChange={handleChange}
+                            >
+                                <option value="">Select language</option>
+                                <option value="English">English</option>
+                                <option value="Indonesian">Indonesian</option>
+                                <option value="Spanish">Spanish</option>
+                                <option value="French">French</option>
+                                <option value="German">German</option>
+                                <option value="Chinese">Chinese</option>
+                                <option value="Japanese">Japanese</option>
+                                <option value="Korean">Korean</option>
+                                <option value="Arabic">Arabic</option>
+                                <option value="Other">Other</option>
+                            </select>
                         </div>
                     </div>
 

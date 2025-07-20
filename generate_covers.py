@@ -5,6 +5,9 @@ Script to generate placeholder cover images for books and papers
 
 from PIL import Image, ImageDraw, ImageFont
 import os
+import mysql.connector
+from mysql.connector import Error
+
 
 def create_cover_image(title, filename, width=400, height=600, bg_color=(52, 73, 94), text_color=(255, 255, 255)):
     """Create a placeholder cover image with the given title"""
@@ -109,5 +112,59 @@ def main():
     
     print("All cover images generated successfully!")
 
+def generate_missing_covers_from_db():
+    """Generate placeholder covers for all missing cover images referenced in the DB, using the title as text."""
+    db_config = {
+        'host': 'localhost',
+        'port': 3307,  # Docker MySQL port
+        'user': 'root',
+        'password': 'rootpassword',
+        'database': 'e_repository_db',
+    }
+    covers_dir = "uploads/covers"
+    os.makedirs(covers_dir, exist_ok=True)
+
+    try:
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor()
+        # Get all cover image filenames and titles from books and papers
+        queries = [
+            ("SELECT title, cover_image_url FROM books WHERE cover_image_url IS NOT NULL AND cover_image_url != ''", "book"),
+            ("SELECT title, cover_image_url FROM papers WHERE cover_image_url IS NOT NULL AND cover_image_url != ''", "paper"),
+        ]
+        missing = []
+        for query, typ in queries:
+            cursor.execute(query)
+            for title, cover_url in cursor.fetchall():
+                if not cover_url:
+                    continue
+                # Normalize path
+                if cover_url.startswith("/uploads/covers/"):
+                    filename = cover_url[len("/uploads/covers/"):]
+                else:
+                    filename = os.path.basename(cover_url)
+                filepath = os.path.join(covers_dir, filename)
+                if not os.path.exists(filepath):
+                    missing.append((title, filepath))
+        if not missing:
+            print("No missing cover images to generate!")
+            return
+        print(f"Generating {len(missing)} missing cover images...")
+        for title, filepath in missing:
+            create_cover_image(title, filepath)
+        print("All missing cover images generated!")
+    except Error as e:
+        print(f"Error connecting to MySQL: {e}")
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+        if 'conn' in locals() and conn.is_connected():
+            conn.close()
+
+
 if __name__ == "__main__":
-    main() 
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "db":
+        generate_missing_covers_from_db()
+    else:
+        main() 

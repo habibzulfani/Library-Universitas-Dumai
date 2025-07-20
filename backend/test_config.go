@@ -201,7 +201,7 @@ func SeedTestData(db *gorm.DB) error {
 			ISBN:          stringPtr("978-0262033848"),
 			Subject:       stringPtr("Computer Science"),
 			Language:      stringPtr("English"),
-			Pages:         intPtr(1312),
+			Pages:         stringPtr("1312"),
 			Summary:       stringPtr("A comprehensive textbook covering algorithmic techniques and data structures used in computer science."),
 			FileURL:       stringPtr("/uploads/books/intro_algorithms.pdf"),
 			CreatedBy:     uintPtr(1), // Admin user
@@ -214,7 +214,7 @@ func SeedTestData(db *gorm.DB) error {
 			ISBN:          stringPtr("978-0132350884"),
 			Subject:       stringPtr("Computer Science"),
 			Language:      stringPtr("English"),
-			Pages:         intPtr(464),
+			Pages:         stringPtr("464"),
 			Summary:       stringPtr("Best practices for writing clean, maintainable, and efficient code."),
 			FileURL:       stringPtr("/uploads/books/clean_code.pdf"),
 			CreatedBy:     uintPtr(1), // Admin user

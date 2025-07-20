@@ -56,7 +56,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
           <div className="text-center">
             <h1 className="text-4xl md:text-6xl font-bold mb-6">
-              Welcome to Library of Universitas Dumai
+              Welcome to Repository of Universitas Dumai
             </h1>
             <p className="text-xl md:text-2xl mb-8 text-[#eaf6f1] max-w-3xl mx-auto">
               Your gateway to academic knowledge. Discover books, research papers,
@@ -70,7 +70,7 @@ export default function HomePage() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search for books, papers, authors, ISBN, ISSN, or year..."
+                  placeholder="Search for books, papers, authors, ISBN, ISSN, DOI, or year..."
                   className="w-full px-6 py-4 rounded-lg text-gray-900 bg-white border-2 border-gray-200 shadow-lg focus:outline-none focus:ring-2 focus:ring-[#4cae8a] focus:border-[#4cae8a]"
                 />
                 <button

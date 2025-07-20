@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
+import { authAPI } from '@/lib/api';
 
 export default function ForgotPasswordPage() {
     const [email, setEmail] = useState("");
@@ -25,21 +26,12 @@ export default function ForgotPasswordPage() {
         setSuccess("");
         setIsLoading(true);
         try {
-            const res = await fetch("/api/v1/auth/forgot-password", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                setSuccess(
-                    "If the email exists, a password reset link has been sent. Please check your inbox."
-                );
-            } else {
-                setError(data.error || "Something went wrong. Please try again.");
-            }
-        } catch {
-            setError("Something went wrong. Please try again.");
+            await authAPI.forgotPassword({ email });
+            setSuccess(
+                "If the email exists, a password reset link has been sent. Please check your inbox."
+            );
+        } catch (err: any) {
+            setError(err?.response?.data?.error || "Something went wrong. Please try again.");
         } finally {
             setIsLoading(false);
         }

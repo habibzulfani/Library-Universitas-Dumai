@@ -58,7 +58,7 @@ type Book struct {
 	ISBN          *string   `json:"isbn" gorm:"size:50;index"`
 	Subject       *string   `json:"subject" gorm:"size:255"`
 	Language      *string   `json:"language" gorm:"size:100;default:'English'"`
-	Pages         *int      `json:"pages"`
+	Pages         *string   `json:"pages" gorm:"size:50"`
 	Summary       *string   `json:"summary" gorm:"type:text"`
 	FileURL       *string   `json:"file_url" gorm:"size:500"`
 	CoverImageURL *string   `json:"cover_image_url" gorm:"size:500"`
@@ -83,6 +83,7 @@ type Paper struct {
 	Department    *string       `json:"department" gorm:"size:255"`
 	Year          *int          `json:"year"`
 	ISSN          *string       `json:"issn" gorm:"size:191"`
+	Language      *string       `json:"language" gorm:"size:100;default:'English'"`
 	Journal       *string       `json:"journal" gorm:"size:255"`
 	Volume        *int          `json:"volume"`
 	Issue         *int          `json:"issue"`
@@ -189,6 +190,18 @@ type Download struct {
 	IPAddress    *string   `json:"ip_address" gorm:"size:45"`
 	UserAgent    *string   `json:"user_agent" gorm:"type:text"`
 	DownloadedAt time.Time `json:"downloaded_at" gorm:"index:idx_downloads_downloaded_at"`
+
+	// Relationships
+	User *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+}
+
+// Citation represents the citations table
+type Citation struct {
+	ID       uint      `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserID   *uint     `json:"user_id" gorm:"index:idx_citations_user_id"`
+	ItemID   uint      `json:"item_id" gorm:"not null;index:idx_citations_item"`
+	ItemType string    `json:"item_type" gorm:"type:enum('book','paper');not null;index:idx_citations_item"`
+	CitedAt  time.Time `json:"cited_at" gorm:"index:idx_citations_cited_at"`
 
 	// Relationships
 	User *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
@@ -307,6 +320,7 @@ func InitDB(config *configs.Config) *gorm.DB {
 		&FileUpload{},
 		&Download{},
 		&PasswordResetToken{},
+		&Citation{}, // <-- Add this line
 	)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to migrate database: %v", err))

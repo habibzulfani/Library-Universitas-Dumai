@@ -154,7 +154,7 @@ func (suite *BooksTestSuite) createTestBooks() {
 			ISBN:          stringPtr("978-1234567890"),
 			Subject:       stringPtr("Computer Science"),
 			Language:      stringPtr("English"),
-			Pages:         intPtr(300),
+			Pages:         stringPtr("300"),
 			Summary:       stringPtr("A test book"),
 		},
 		{
@@ -165,7 +165,7 @@ func (suite *BooksTestSuite) createTestBooks() {
 			ISBN:          stringPtr("978-0987654321"),
 			Subject:       stringPtr("Mathematics"),
 			Language:      stringPtr("English"),
-			Pages:         intPtr(250),
+			Pages:         stringPtr("250"),
 			Summary:       stringPtr("Another test book"),
 		},
 	}
@@ -226,7 +226,7 @@ func (suite *BooksTestSuite) TestCreateBook_Success() {
 		PublishedYear: &[]int{2024}[0],
 		Subject:       &[]string{"Science"}[0],
 		Language:      &[]string{"English"}[0],
-		Pages:         &[]int{400}[0],
+		Pages:         &[]string{"400"}[0],
 		Summary:       &[]string{"A new test book summary"}[0],
 	}
 

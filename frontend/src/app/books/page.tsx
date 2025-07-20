@@ -8,6 +8,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'react-hot-toast';
 import BookForm from '@/components/forms/BookForm';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import SearchBar from '@/components/ui/SearchBar';
+import Pagination from '@/components/ui/Pagination';
 
 export default function BooksPage() {
   const { user } = useAuth();
@@ -48,7 +50,7 @@ export default function BooksPage() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setCurrentPage(1);
-    fetchBooks({ query: searchQuery, page: 1 });
+    // Do not call fetchBooks here; useEffect will handle it
   };
 
   const handlePageChange = (page: number) => {
@@ -68,7 +70,11 @@ export default function BooksPage() {
 
     setIsDeleting(true);
     try {
-      await booksAPI.deleteBook(showDeleteConfirm.id);
+      if (user?.role === 'admin') {
+        await booksAPI.deleteBook(showDeleteConfirm.id);
+      } else {
+        await booksAPI.deleteUserBook(showDeleteConfirm.id);
+      }
       setBooks(books.filter(book => book.id !== showDeleteConfirm.id));
       toast.success('Book deleted successfully');
     } catch (error) {
@@ -80,9 +86,17 @@ export default function BooksPage() {
     }
   };
 
-  const handleEditBook = (book: Book) => {
-    setEditingBook(book);
-    setShowBookForm(true);
+  const handleEditBook = async (book: Book) => {
+    try {
+      // Fetch the full book data including authors
+      const response = await booksAPI.getBook(book.id);
+      const fullBook = response;
+      setEditingBook(fullBook);
+      setShowBookForm(true);
+    } catch (error: any) {
+      console.error('Error loading book details:', error);
+      toast.error('Failed to load book details');
+    }
   };
 
   const handleBookSuccess = () => {
@@ -124,33 +138,20 @@ export default function BooksPage() {
               setEditingBook(null);
             }}
             onSuccess={handleBookSuccess}
+            isAdmin={user?.role === 'admin'}
           />
         )}
 
         {/* Search */}
         <div className="mb-8">
-          <form onSubmit={handleSearch} className="max-w-2xl">
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                type="search"
-                placeholder="Search books by title, author, or subject..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-[#38b36c] focus:border-[#38b36c]"
-              />
-              <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                <button
-                  type="submit"
-                  className="bg-[#38b36c] text-white px-4 py-2 rounded-md hover:bg-[#2e8c55] focus:outline-none focus:ring-2 focus:ring-[#38b36c]"
-                >
-                  Search
-                </button>
-              </div>
-            </div>
-          </form>
+          <SearchBar
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onSubmit={handleSearch}
+            placeholder="Search books by title, author, subject, or DOI..."
+            buttonLabel="Search"
+            className="max-w-2xl"
+          />
         </div>
 
         {/* Results count */}
@@ -184,7 +185,7 @@ export default function BooksPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {books.map((book) => (
+            {(books || []).map((book) => (
               <div key={book.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden">
                 <div className="p-6">
                   <h3 className="font-semibold text-lg mb-2 text-gray-900 line-clamp-2">
@@ -275,41 +276,11 @@ export default function BooksPage() {
         {/* Pagination */}
         {totalPages > 1 && (
           <div className="mt-12 flex justify-center">
-            <nav className="flex items-center space-x-2">
-              <button
-                onClick={() => handlePageChange(currentPage - 1)}
-                disabled={currentPage === 1}
-                className="px-3 py-2 rounded-md text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-
-              {[...Array(Math.min(5, totalPages))].map((_, i) => {
-                const page = i + Math.max(1, currentPage - 2);
-                if (page > totalPages) return null;
-
-                return (
-                  <button
-                    key={page}
-                    onClick={() => handlePageChange(page)}
-                    className={`px-3 py-2 rounded-md text-sm font-medium ${currentPage === page
-                      ? 'bg-[#38b36c] text-white'
-                      : 'text-gray-700 hover:text-[#38b36c]'
-                      }`}
-                  >
-                    {page}
-                  </button>
-                );
-              })}
-
-              <button
-                onClick={() => handlePageChange(currentPage + 1)}
-                disabled={currentPage === totalPages}
-                className="px-3 py-2 rounded-md text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </nav>
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={handlePageChange}
+            />
           </div>
         )}
 

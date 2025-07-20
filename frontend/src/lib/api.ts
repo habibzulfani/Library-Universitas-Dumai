@@ -15,6 +15,8 @@ const getFullUrl = (url?: string) => {
   return `${API_BASE_URL}/api/v1/${cleanUrl}`;
 };
 
+export { getFullUrl };
+
 export const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
   headers: {
@@ -29,17 +31,37 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    console.log('API Request:', {
+      method: config.method,
+      url: config.url,
+      hasToken: !!token,
+      headers: config.headers
+    });
     return config;
   },
   (error) => {
+    console.error('API Request Error:', error);
     return Promise.reject(error);
   }
 );
 
 // Response interceptor to handle auth errors
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log('API Response:', {
+      status: response.status,
+      url: response.config.url,
+      data: response.data
+    });
+    return response;
+  },
   (error) => {
+    console.error('API Response Error:', {
+      status: error.response?.status,
+      url: error.config?.url,
+      message: error.message,
+      data: error.response?.data
+    });
     if (error.response?.status === 401) {
       // Only redirect to login if not on profile endpoint
       if (!error.config.url?.includes('/profile')) {
@@ -85,7 +107,7 @@ export interface Book {
   isbn?: string;
   subject?: string;
   language?: string;
-  pages?: number;
+  pages?: string;
   summary?: string;
   file_url?: string;
   cover_image_url?: string;
@@ -103,15 +125,16 @@ export interface Paper {
     id: number;
     author_name: string;
   }>;
-  abstract: string;
-  keywords: string;
-  journal: string;
+  abstract?: string;
+  keywords?: string;
+  journal?: string;
   volume?: number;
   issue?: number;
-  pages: string;
+  pages?: string;
   year?: number;
   doi?: string;
   issn?: string;
+  language?: string;
   file_url?: string;
   cover_image_url?: string;
   created_at: string;
@@ -255,13 +278,21 @@ export const authAPI = {
   deleteUser: (id: number) => api.delete(`/admin/users/${id}`),
   getPendingLecturers: () => api.get<User[]>('/admin/lecturers'),
   approveLecturer: (id: number) => api.post<{ message: string }>(`/admin/lecturers/${id}/approve`),
-  adminRegister: (data: AdminRegisterData) => api.post<User>('/admin/register', data),
+  adminRegister: (data: FormData) => api.post<User>('/admin/register', data, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
 };
 
 // Public API endpoints
 export const publicAPI = {
   getDepartments: (faculty?: string) =>
     api.get<Department[]>('/departments', { params: { faculty } }),
+  extractMetadata: (formData: FormData) => api.post('/metadata/extract', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  }),
+  extractMetadataFromURL: (fileURL: string) => api.post('/metadata/extract-from-url', { file_url: fileURL }),
 };
 
 export const booksAPI = {
@@ -287,14 +318,19 @@ export const booksAPI = {
     })),
 
   // Admin endpoints
-  createBook: (data: FormData) => api.post<Book>('/admin/books', data, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-
-  updateBook: (id: number, data: FormData) =>
-    api.put<Book>(`/admin/books/${id}`, data, {
+  createBook: (data: FormData) => {
+    console.log('API: Creating admin book with data:', data);
+    return api.post<Book>('/admin/books', data, {
       headers: { 'Content-Type': 'multipart/form-data' }
-    }),
+    });
+  },
+
+  updateBook: (id: number, data: FormData) => {
+    console.log('API: Updating admin book with data:', data);
+    return api.put<Book>(`/admin/books/${id}`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
 
   deleteBook: (id: number) => api.delete(`/admin/books/${id}`),
 
@@ -304,7 +340,7 @@ export const booksAPI = {
       ...response,
       data: {
         ...response.data,
-        data: response.data.data.map(book => ({
+        data: (response.data.data ?? []).map(book => ({
           ...book,
           file_url: getFullUrl(book.file_url),
           cover_image_url: getFullUrl(book.cover_image_url),
@@ -312,14 +348,19 @@ export const booksAPI = {
       },
     })),
 
-  createUserBook: (data: FormData) => api.post<Book>('/user/books', data, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
-
-  updateUserBook: (id: number, data: FormData) =>
-    api.put<Book>(`/user/books/${id}`, data, {
+  createUserBook: (data: FormData) => {
+    console.log('API: Creating user book with data:', data);
+    return api.post<Book>('/user/books', data, {
       headers: { 'Content-Type': 'multipart/form-data' }
-    }),
+    });
+  },
+
+  updateUserBook: (id: number, data: FormData) => {
+    console.log('API: Updating user book with data:', data);
+    return api.put<Book>(`/user/books/${id}`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
 
   deleteUserBook: (id: number) => api.delete(`/user/books/${id}`),
 
@@ -361,8 +402,56 @@ export const booksAPI = {
     window.URL.revokeObjectURL(url);
   },
 
+  // Public download functionality (no authentication required)
+  downloadBookPublic: async (id: number, title: string, fileUrl?: string) => {
+    const response = await api.get(`/books/${id}/download`, {
+      responseType: 'blob',
+    });
+
+    // Create blob link to download
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+
+    // Try to get filename from Content-Disposition header first
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = title;
+
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+      if (filenameMatch) {
+        filename = filenameMatch[1];
+      }
+    } else {
+      // Fallback: extract extension from file_url if available
+      if (fileUrl) {
+        const extension = fileUrl.split('.').pop();
+        filename = extension ? `${title}.${extension}` : title;
+      } else {
+        // Last resort fallback
+        filename = `${title}.pdf`;
+      }
+    }
+
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
   search: (params?: SearchParams) =>
-    api.get<PaginatedResponse<Book>>('/books', { params }),
+    api.get<PaginatedResponse<Book>>('/books', { params }).then(response => ({
+      ...response,
+      data: {
+        ...response.data,
+        data: Array.isArray(response.data.data) ? response.data.data.map(book => ({
+          ...book,
+          file_url: getFullUrl(book.file_url),
+          cover_image_url: getFullUrl(book.cover_image_url),
+        })) : [],
+      },
+    })),
 };
 
 export const papersAPI = {
@@ -372,11 +461,11 @@ export const papersAPI = {
       ...response,
       data: {
         ...response.data,
-        data: response.data.data.map(paper => ({
+        data: Array.isArray(response.data.data) ? response.data.data.map(paper => ({
           ...paper,
           file_url: getFullUrl(paper.file_url),
           cover_image_url: getFullUrl(paper.cover_image_url),
-        })),
+        })) : [],
       },
     })),
 
@@ -405,7 +494,7 @@ export const papersAPI = {
       ...response,
       data: {
         ...response.data,
-        data: response.data.data.map(paper => ({
+        data: (response.data.data ?? []).map(paper => ({
           ...paper,
           file_url: getFullUrl(paper.file_url),
           cover_image_url: getFullUrl(paper.cover_image_url),
@@ -470,8 +559,56 @@ export const papersAPI = {
     window.URL.revokeObjectURL(url);
   },
 
+  // Public download functionality (no authentication required)
+  downloadPaperPublic: async (id: number, title: string, fileUrl?: string) => {
+    const response = await api.get(`/papers/${id}/download`, {
+      responseType: 'blob',
+    });
+
+    // Create blob link to download
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+
+    // Try to get filename from Content-Disposition header first
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = title;
+
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+      if (filenameMatch) {
+        filename = filenameMatch[1];
+      }
+    } else {
+      // Fallback: extract extension from file_url if available
+      if (fileUrl) {
+        const extension = fileUrl.split('.').pop();
+        filename = extension ? `${title}.${extension}` : title;
+      } else {
+        // Last resort fallback
+        filename = `${title}.pdf`;
+      }
+    }
+
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
   search: (params?: SearchParams) =>
-    api.get<PaginatedResponse<Paper>>('/papers', { params }),
+    api.get<PaginatedResponse<Paper>>('/papers', { params }).then(response => ({
+      ...response,
+      data: {
+        ...response.data,
+        data: Array.isArray(response.data.data) ? response.data.data.map(paper => ({
+          ...paper,
+          file_url: getFullUrl(paper.file_url),
+          cover_image_url: getFullUrl(paper.cover_image_url),
+        })) : [],
+      },
+    })),
 };
 
 export const adminAPI = {
@@ -494,4 +631,40 @@ export const authorsAPI = {
     api.get<{ authors: Author[] }>(`/authors/search${query ? `?query=${encodeURIComponent(query)}` : ''}`),
   getAuthorWorks: (name: string) =>
     api.get<AuthorDetail>(`/authors/${encodeURIComponent(name)}/works`),
-}; 
+};
+
+export const getCitationsPerMonth = () => api.get('/citations-per-month');
+export const getUserCitationsPerMonth = () => api.get('/user/citations-per-month');
+export const getUserStats = () => api.get('/user/stats');
+export const getUserProfile = (id: string | number) => api.get(`/users/${id}`);
+export const getUserStatsById = (id: string | number) => api.get(`/users/${id}/stats`);
+export const getUserCitationsPerMonthById = (id: string | number) => api.get(`/users/${id}/citations-per-month`);
+export const getUserDownloadsPerMonthById = (id: string | number) => api.get(`/users/${id}/downloads-per-month`);
+export const getBooksByUserId = (id: string | number, page = 1, limit = 8, query?: string) => {
+  let url = `/books?created_by=${id}&page=${page}&limit=${limit}`;
+  if (query && query.trim()) {
+    url += `&query=${encodeURIComponent(query)}`;
+  }
+  return api.get(url);
+};
+export const getPapersByUserId = (id: string | number, page = 1, limit = 8, query?: string) => {
+  let url = `/papers?created_by=${id}&page=${page}&limit=${limit}`;
+  if (query && query.trim()) {
+    url += `&query=${encodeURIComponent(query)}`;
+  }
+  return api.get(url);
+};
+export const getBookStats = (id: string | number) => api.get(`/books/${id}/stats`);
+export const getPaperStats = (id: string | number) => api.get(`/papers/${id}/stats`);
+export const getBooksPerMonth = () => api.get('/books-per-month');
+export const getPapersPerMonth = () => api.get('/papers-per-month');
+export const getUserDownloadsPerMonth = () => api.get('/user/downloads-per-month');
+
+// Metadata extraction
+export const extractMetadata = (formData: FormData) => api.post('/metadata/extract', formData, {
+  headers: {
+    'Content-Type': 'multipart/form-data',
+  },
+});
+
+export const extractMetadataFromURL = (fileURL: string) => api.post('/metadata/extract-from-url', { file_url: fileURL }); 

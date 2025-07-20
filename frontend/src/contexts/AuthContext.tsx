@@ -43,6 +43,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const response = await authAPI.login(credentials);
       setUser(response.data.user);
       localStorage.setItem('auth_token', response.data.token);
+      // Fetch full profile after login
+      const profileResponse = await authAPI.getProfile();
+      setUser(profileResponse.data);
       router.push('/dashboard');
       toast.success('Login successful!');
     } catch (error) {

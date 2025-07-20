@@ -6,6 +6,7 @@ const readline = require('readline');
 // === CONFIGURATION ===
 const DB_CONFIG = {
     host: 'localhost',
+    port: 3307,             // Docker MySQL port
     user: 'root',           // or your DB user
     password: 'rootpassword', // or your DB password
     database: 'e_repository_db',

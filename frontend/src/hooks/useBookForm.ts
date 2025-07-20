@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { booksAPI, Book } from '@/lib/api';
 import { toast } from 'react-hot-toast';
+import { api } from '@/lib/api';
 
 interface BookFormData {
     title: string;
@@ -44,18 +45,18 @@ export function useBookForm({ onSuccess, onError, editingBook, isAdmin = false }
     const [existingFile, setExistingFile] = useState<string | null>(null);
     const [existingFileUrl, setExistingFileUrl] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [editingAuthorIndex, setEditingAuthorIndex] = useState<number | null>(null);
 
     // Initialize form data when editing book changes
     useEffect(() => {
         if (editingBook) {
-            const existingAuthors = editingBook.authors?.map(a => a.author_name) || [editingBook.author];
-            const firstAuthor = existingAuthors.length > 0 ? existingAuthors[0] : '';
-            const remainingAuthors = existingAuthors.slice(1);
+            // Get all authors from the book
+            const existingAuthors = editingBook.authors?.map(a => a.author_name) || (editingBook.author ? [editingBook.author] : []);
 
             setBookFormData({
                 title: editingBook.title,
-                author: firstAuthor,
-                authors: remainingAuthors,
+                author: '', // Always empty for editing - authors go in tags
+                authors: existingAuthors, // All authors go in tags
                 publisher: editingBook.publisher || '',
                 published_year: editingBook.published_year?.toString() || '',
                 isbn: editingBook.isbn || '',
@@ -66,11 +67,9 @@ export function useBookForm({ onSuccess, onError, editingBook, isAdmin = false }
                 file: null,
                 coverImage: null,
             });
-
             if (editingBook.cover_image_url) {
                 setCoverPreview(editingBook.cover_image_url);
             }
-
             if (editingBook.file_url) {
                 const fileName = editingBook.file_url.split('/').pop() || '';
                 setExistingFile(fileName);
@@ -87,12 +86,11 @@ export function useBookForm({ onSuccess, onError, editingBook, isAdmin = false }
             return false;
         }
 
-        const allAuthors = [...bookFormData.authors];
-        if (bookFormData.author.trim() && !allAuthors.includes(bookFormData.author.trim())) {
-            allAuthors.push(bookFormData.author.trim());
-        }
+        // Check if we have at least one author (either in input or in authors array)
+        const hasAuthorInput = bookFormData.author.trim() !== '';
+        const hasAuthorsInArray = bookFormData.authors.length > 0;
 
-        if (allAuthors.length === 0 && !bookFormData.author.trim()) {
+        if (!hasAuthorInput && !hasAuthorsInArray) {
             toast.error('At least one author is required');
             return false;
         }
@@ -112,29 +110,40 @@ export function useBookForm({ onSuccess, onError, editingBook, isAdmin = false }
 
     const handleBookSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        console.log('Form submission started');
+
+        // Get all authors including the current input
+        const allAuthors = [...bookFormData.authors];
+        if (bookFormData.author.trim() && !allAuthors.includes(bookFormData.author.trim())) {
+            allAuthors.push(bookFormData.author.trim());
+        }
+
+        // Check for duplicate authors
+        const lowerAuthors = allAuthors.map(a => a.toLowerCase());
+        if (new Set(lowerAuthors).size !== lowerAuthors.length) {
+            toast.error('Duplicate author name');
+            return;
+        }
+
+        // Check if we have at least one author
+        if (allAuthors.length === 0) {
+            toast.error('At least one author is required');
+            return;
+        }
 
         if (!validateForm()) {
             return;
         }
 
+        console.log('Validation passed, starting submission');
         setIsSubmitting(true);
+
         try {
             const formData = new FormData();
-
-            // Required fields
             formData.append('title', bookFormData.title);
-
-            // Handle multiple authors
-            const allAuthors = [...bookFormData.authors];
-            if (bookFormData.author.trim() && !allAuthors.includes(bookFormData.author.trim())) {
-                allAuthors.push(bookFormData.author.trim());
-            }
-
             allAuthors.forEach(author => {
                 formData.append('authors[]', author);
             });
-
-            // Optional fields
             if (bookFormData.publisher) formData.append('publisher', bookFormData.publisher);
             if (bookFormData.published_year) formData.append('published_year', bookFormData.published_year);
             if (bookFormData.isbn) formData.append('isbn', bookFormData.isbn);
@@ -145,25 +154,39 @@ export function useBookForm({ onSuccess, onError, editingBook, isAdmin = false }
             if (bookFormData.file) formData.append('file', bookFormData.file);
             if (bookFormData.coverImage) formData.append('cover_image', bookFormData.coverImage);
 
-            if (editingBook) {
-                if (isAdmin) {
-                    await booksAPI.updateBook(editingBook.id, formData);
-                } else {
-                    await booksAPI.updateUserBook(editingBook.id, formData);
-                }
-                toast.success('Book updated successfully');
-            } else {
-                if (isAdmin) {
-                    await booksAPI.createBook(formData);
-                } else {
-                    await booksAPI.createUserBook(formData);
-                }
-                toast.success('Book created successfully');
+            console.log('FormData prepared:', {
+                title: bookFormData.title,
+                authors: allAuthors,
+                isAdmin,
+                editingBook: !!editingBook
+            });
+
+            // Debug: Log all FormData entries
+            for (let [key, value] of formData.entries()) {
+                console.log(`FormData entry: ${key} = ${value}`);
             }
 
-            onSuccess();
-            resetBookForm();
-        } catch (error) {
+            let url = '';
+            if (editingBook) {
+                // Update existing book
+                url = isAdmin
+                    ? `/admin/books/${editingBook.id}`
+                    : `/user/books/${editingBook.id}`;
+                await api.put(url, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
+            } else {
+                // Create new book
+                url = isAdmin ? '/admin/books' : '/user/books';
+                await api.post(url, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                });
+            }
+
+            toast.success(editingBook ? 'Book updated successfully' : 'Book added successfully');
+            if (onSuccess) onSuccess();
+        } catch (error: any) {
+            console.error('Form submission error:', error);
             const errorMessage = error instanceof Error ? error.message : 'Failed to save book';
             toast.error(errorMessage);
             if (onError) {
@@ -201,27 +224,44 @@ export function useBookForm({ onSuccess, onError, editingBook, isAdmin = false }
     };
 
     const handleAddAuthor = () => {
-        if (bookFormData.author.trim() && !bookFormData.authors.includes(bookFormData.author.trim())) {
-            setBookFormData({
-                ...bookFormData,
-                authors: [...bookFormData.authors, bookFormData.author.trim()],
-                author: ''
-            });
+        const input = bookFormData.author.trim();
+        if (!input) return;
+        if ([input.toLowerCase(), ...bookFormData.authors.map(a => a.toLowerCase())].filter((a, i, arr) => arr.indexOf(a) === i).length !== bookFormData.authors.length + 1) {
+            toast.error('Duplicate author name');
+            return;
         }
+
+        let newAuthors: string[];
+        if (editingAuthorIndex !== null) {
+            // Insert back at the original position when editing
+            newAuthors = [...bookFormData.authors];
+            newAuthors.splice(editingAuthorIndex, 0, input);
+            setEditingAuthorIndex(null);
+        } else {
+            // Add to the end for new authors
+            newAuthors = [...bookFormData.authors, input];
+        }
+
+        setBookFormData({
+            ...bookFormData,
+            authors: newAuthors,
+            author: '',
+        });
     };
 
     const handleEditAuthor = (index: number) => {
+        setEditingAuthorIndex(index);
         setBookFormData({
             ...bookFormData,
             author: bookFormData.authors[index],
-            authors: bookFormData.authors.filter((_, i) => i !== index)
+            authors: bookFormData.authors.filter((_, i) => i !== index),
         });
     };
 
     const handleRemoveAuthor = (index: number) => {
         setBookFormData({
             ...bookFormData,
-            authors: bookFormData.authors.filter((_, i) => i !== index)
+            authors: bookFormData.authors.filter((_, i) => i !== index),
         });
     };
 
@@ -250,6 +290,7 @@ export function useBookForm({ onSuccess, onError, editingBook, isAdmin = false }
         setCoverPreview(null);
         setExistingFile(null);
         setExistingFileUrl(null);
+        setEditingAuthorIndex(null);
     };
 
     return {

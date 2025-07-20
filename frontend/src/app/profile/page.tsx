@@ -20,13 +20,21 @@ import {
   CameraIcon,
   ArrowLeftIcon
 } from '@heroicons/react/24/outline';
-import { authAPI, Department, publicAPI } from '@/lib/api';
+import { authAPI, Department, publicAPI, getFullUrl } from '@/lib/api';
 import { toast } from 'react-hot-toast';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
+// Helper to get cache-busted URL
+const getCacheBustedUrl = (url: string | null) => {
+  if (!url) return undefined;
+  const fullUrl = getFullUrl(url);
+  if (!fullUrl) return undefined;
+  return `${fullUrl}?t=${Date.now()}`;
+};
 
 export default function ProfilePage() {
   const { user, isAuthenticated, updateUser } = useAuth();
@@ -168,6 +176,8 @@ export default function ProfilePage() {
 
       const response = await authAPI.updateProfile(formData);
       updateUser(response.data);
+      setPreviewUrl(response.data.profile_picture_url || null);
+      setProfilePicture(null);
       setIsEditing(false);
       toast.success('Profile updated successfully!');
     } catch {
@@ -302,9 +312,16 @@ export default function ProfilePage() {
                   <div className="flex items-center space-x-4">
                     <div className="relative">
                       <div className="h-20 w-20 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center overflow-hidden border-4 border-white/30">
-                        {previewUrl ? (
+                        {previewUrl && (previewUrl.startsWith('blob:') || previewUrl.startsWith('data:')) ? (
                           <Image
                             src={previewUrl}
+                            alt="Profile"
+                            fill
+                            className="object-cover"
+                          />
+                        ) : previewUrl && getFullUrl(previewUrl) ? (
+                          <Image
+                            src={getCacheBustedUrl(previewUrl) as string}
                             alt="Profile"
                             fill
                             className="object-cover"

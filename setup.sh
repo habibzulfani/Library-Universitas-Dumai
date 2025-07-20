@@ -532,6 +532,12 @@ EOF
     fi
     
     print_status "Starting services..."
+    # Load environment variables from env.development if it exists
+    if [ -f "env.development" ]; then
+        print_status "Loading development environment configuration..."
+        export $(cat env.development | grep -v '^#' | xargs)
+    fi
+    
     if ! $DOCKER_COMPOSE_CMD up -d; then
         print_error "Failed to start services"
         exit 1
@@ -551,6 +557,31 @@ EOF
         print_error "Database setup failed. Stopping all services..."
         $DOCKER_COMPOSE_CMD down >/dev/null 2>&1 || true
         exit 1
+    fi
+
+    # Step 10.5: Import biblio CSV data
+    print_status "Importing biblio CSV data..."
+    if (cd backend && go run cmd/import_biblio/main.go); then
+        print_success "CSV data import completed successfully!"
+    else
+        print_warning "CSV data import failed or Go is not installed. Skipping import."
+    fi
+
+    # Step 10.6: Generate missing cover images
+    print_status "Generating missing cover images (placeholder covers for missing files)..."
+    if [ -x /opt/homebrew/bin/python3.10 ]; then
+        PYTHON_CMD="/opt/homebrew/bin/python3.10"
+    else
+        PYTHON_CMD="python3"
+    fi
+    if ! $PYTHON_CMD -c "import PIL, mysql.connector" 2>/dev/null; then
+        print_status "Installing required Python packages (Pillow, mysql-connector-python)..."
+        $PYTHON_CMD -m pip install pillow mysql-connector-python
+    fi
+    if $PYTHON_CMD generate_covers.py db; then
+        print_success "Cover image generation completed successfully!"
+    else
+        print_warning "Failed to generate missing cover images. Please check Python and dependencies."
     fi
 
     # Step 11: Wait for API to be ready
