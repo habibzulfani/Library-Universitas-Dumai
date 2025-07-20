@@ -122,9 +122,9 @@ fi
 
 # Step 9.5: Generate secure passwords and update .env
 print_status "Generating secure passwords..."
-MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32)
-MYSQL_PASSWORD=$(openssl rand -base64 32)
-JWT_SECRET=$(openssl rand -base64 64)
+MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
+MYSQL_PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
+JWT_SECRET=$(openssl rand -base64 64 | tr -d '\n')
 
 sed -i "s|REPLACE_WITH_STRONG_ROOT_PASSWORD|$MYSQL_ROOT_PASSWORD|g" .env
 sed -i "s|REPLACE_WITH_STRONG_DB_PASSWORD|$MYSQL_PASSWORD|g" .env
