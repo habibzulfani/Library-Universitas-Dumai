@@ -107,21 +107,16 @@ chmod +x backend/setup_database.sh
 ./backend/setup_database.sh
 
 # Step 10.6: Import biblio CSV data (Go)
-print_status "Importing biblio CSV data..."
-if [ -f backend/cmd/import_biblio/main.go ]; then
-    (cd backend && go run cmd/import_biblio/main.go)
-    print_success "CSV data import completed successfully!"
-else
-    print_warning "CSV import script not found. Skipping."
-fi
+print_status "Importing biblio CSV data (inside Docker using util-go)..."
+docker compose run --rm util-go go run cmd/import_biblio/main.go && print_success "CSV data import completed successfully!" || print_warning "CSV data import failed. Please check Go and dependencies in the util-go container."
 
 # Step 10.7: Generate missing cover images (Python)
-print_status "Generating missing cover images (placeholder covers for missing files)..."
-if [ -f generate_covers.py ]; then
-    $PYTHON_CMD generate_covers.py db && print_success "Cover image generation completed successfully!" || print_warning "Failed to generate missing cover images. Please check Python and dependencies."
-else
-    print_warning "generate_covers.py not found. Skipping cover generation."
-fi
+print_status "Generating missing cover images (inside Docker using util-python)..."
+docker compose run --rm util-python python generate_covers.py db && print_success "Cover image generation completed successfully!" || print_warning "Failed to generate missing cover images. Please check Python and dependencies in the util-python container."
+
+# Step 10.8: Check uploads and clean up orphan files (inside Docker using util-node)...
+print_status "Checking uploads and cleaning up orphan files (inside Docker using util-node)..."
+docker compose run --rm util-node node check_uploads.js && print_success "Upload check and cleanup completed successfully!" || print_warning "Upload check failed. Please check Node.js and dependencies in the util-node container."
 
 # Step 11: Check service status
 print_status "Checking service status..."
