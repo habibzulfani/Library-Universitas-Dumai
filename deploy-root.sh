@@ -1,0 +1,112 @@
+#!/bin/bash
+
+# E-Repository Deployment Script for Hostinger VPS (Root Version)
+# This script will set up the server and deploy the application
+
+set -e  # Exit on any error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Function to print colored output
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_status "Starting E-Repository deployment on Hostinger VPS (Root Mode)..."
+
+# Step 1: Update system
+print_status "Updating system packages..."
+apt update && apt upgrade -y
+
+# Step 2: Install required packages
+print_status "Installing required packages..."
+apt install -y curl wget git unzip software-properties-common apt-transport-https ca-certificates gnupg lsb-release
+
+# Step 3: Install Docker
+print_status "Installing Docker..."
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt update
+apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Step 4: Start and enable Docker
+print_status "Starting Docker service..."
+systemctl start docker
+systemctl enable docker
+
+# Step 5: Create application directory
+print_status "Creating application directory..."
+mkdir -p /opt/erepository
+cd /opt/erepository
+
+# Step 6: Clone repository
+print_status "Cloning repository..."
+git clone https://github.com/habibzulfani/Library-Universitas-Dumai.git .
+chmod +x setup.sh
+
+# Step 7: Create production environment
+print_status "Setting up production environment..."
+cp env.production.template .env
+
+# Step 8: Generate secure passwords
+print_status "Generating secure passwords..."
+MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32)
+MYSQL_PASSWORD=$(openssl rand -base64 32)
+JWT_SECRET=$(openssl rand -base64 64)
+
+# Update .env file with secure passwords
+sed -i "s/CHANGE_THIS_TO_SECURE_PASSWORD/$MYSQL_ROOT_PASSWORD/g" .env
+sed -i "s/CHANGE_THIS_TO_VERY_SECURE_JWT_SECRET_KEY/$JWT_SECRET/g" .env
+
+# Step 9: Start services
+print_status "Starting services..."
+docker compose up -d
+
+# Step 10: Wait for services to be ready
+print_status "Waiting for services to be ready..."
+sleep 30
+
+# Step 11: Check service status
+print_status "Checking service status..."
+docker compose ps
+
+# Step 12: Display access information
+print_success "Deployment completed successfully!"
+echo ""
+echo "=== ACCESS INFORMATION ==="
+echo "Frontend: http://$(curl -s ifconfig.me):3000"
+echo "API: http://$(curl -s ifconfig.me):8080"
+echo "PDF Service: http://$(curl -s ifconfig.me):8000"
+echo ""
+echo "=== DATABASE CREDENTIALS ==="
+echo "MySQL Root Password: $MYSQL_ROOT_PASSWORD"
+echo "MySQL User Password: $MYSQL_PASSWORD"
+echo ""
+echo "=== IMPORTANT NOTES ==="
+echo "1. Save the passwords above in a secure location"
+echo "2. Configure your domain DNS to point to this server"
+echo "3. Set up SSL certificates for production use"
+echo "4. Configure firewall rules if needed"
+echo ""
+echo "=== USEFUL COMMANDS ==="
+echo "View logs: docker compose logs -f"
+echo "Stop services: docker compose down"
+echo "Restart services: docker compose restart"
+echo "Update application: git pull && docker compose up -d --build" 
