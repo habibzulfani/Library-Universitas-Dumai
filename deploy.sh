@@ -210,6 +210,11 @@ print_status "Installing Python dependencies in util-python container..."
 docker compose run --rm util-python pip install -r requirements.txt
 print_success "Application started"
 
+# Step 12.2: Install Go (Golang)
+print_status "Installing Go (Golang)..."
+sudo apt install -y golang
+print_success "Go installed"
+
 # Step 12.5: Import biblio CSV data (Go)
 print_status "Importing biblio CSV data..."
 if [ -f backend/cmd/import_biblio/main.go ]; then

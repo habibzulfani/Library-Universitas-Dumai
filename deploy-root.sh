@@ -69,7 +69,9 @@ chmod +x setup.sh
 # Step 6.5: Install Python 3, venv, and dependencies
 print_status "Installing Python 3 and venv..."
 apt install -y python3 python3-pip python3-venv
-python3 -m venv venv
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+fi
 source venv/bin/activate
 if [ -f requirements.txt ]; then
     pip install -r requirements.txt
@@ -83,13 +85,13 @@ cp env.production.template .env
 
 # Step 8: Generate secure passwords
 print_status "Generating secure passwords..."
-MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32)
-MYSQL_PASSWORD=$(openssl rand -base64 32)
-JWT_SECRET=$(openssl rand -base64 64)
+MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
+MYSQL_PASSWORD=$(openssl rand -base64 32 | tr -d '\n')
+JWT_SECRET=$(openssl rand -base64 64 | tr -d '\n')
 
 # Update .env file with secure passwords
-sed -i "s/CHANGE_THIS_TO_SECURE_PASSWORD/$MYSQL_ROOT_PASSWORD/g" .env
-sed -i "s/CHANGE_THIS_TO_VERY_SECURE_JWT_SECRET_KEY/$JWT_SECRET/g" .env
+sed -i "s|CHANGE_THIS_TO_SECURE_PASSWORD|$MYSQL_ROOT_PASSWORD|g" .env
+sed -i "s|CHANGE_THIS_TO_VERY_SECURE_JWT_SECRET_KEY|$JWT_SECRET|g" .env
 
 # Step 9: Start services
 print_status "Starting services..."
