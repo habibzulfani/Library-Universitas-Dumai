@@ -6,15 +6,15 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
 
 ## 1. 🟢 Start/Deploy the Application
 
-### **First-Time Setup or Redeploy**
+### **First-Time Setup or Redeploy (Recommended: Non-root, Production)**
 1. **Connect to your VPS via SSH:**
    ```bash
-   ssh root@YOUR_SERVER_IP
+   ssh youruser@YOUR_SERVER_IP
    # or use Hostinger's web terminal
    ```
 2. **Go to the application directory:**
    ```bash
-   cd /opt/erepository
+   cd /var/www/e-repository
    ```
 3. **Pull the latest code from GitHub:**
    ```bash
@@ -22,13 +22,20 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
    ```
 4. **Make the script file executable**
    ```bash
-   chmod +x deploy-root.sh
+   chmod +x deploy.sh
    ```
 5. **Run the deployment script:**
    ```bash
-   ./deploy-root.sh
+   ./deploy.sh
    ```
    - This will build, start, and seed your app automatically.
+   - The script will create a Python virtual environment (`venv`) and install dependencies. If you see errors about missing `venv/bin/python3`, re-run the script to ensure the venv is created after cloning.
+
+---
+
+### **Alternative: Root-Only Quick Deploy**
+- Use `deploy-root.sh` **only if you must run as root** and do not need Nginx/SSL/firewall setup.
+- The process is similar, but the app directory is `/opt/erepository` and security best practices are not enforced.
 
 ---
 
@@ -36,8 +43,8 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
 
 1. **Connect to your VPS and go to the app directory:**
    ```bash
-   ssh root@YOUR_SERVER_IP
-   cd /opt/erepository
+   ssh youruser@YOUR_SERVER_IP
+   cd /var/www/e-repository
    ```
 2. **Pull the latest code:**
    ```bash
@@ -45,11 +52,11 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
    ```
 3. **Make the script file executable**
    ```bash
-   chmod +x deploy-root.sh
+   chmod +x deploy.sh
    ```
 4. **Restart the app with the latest code:**
    ```bash
-   ./deploy-root.sh
+   ./deploy.sh
    ```
    - This will rebuild, restart, and reseed the database.
 
@@ -59,7 +66,7 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
 
 1. **Go to the app directory:**
    ```bash
-   cd /opt/erepository
+   cd /var/www/e-repository
    ```
 2. **Stop all services:**
    ```bash
@@ -109,8 +116,9 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
 
 ## 7. 💡 Notes
 - Always pull the latest code before redeploying.
-- The deployment script (`deploy-root.sh`) will reseed your database every time you run it (overwriting data!).
+- The deployment script (`deploy.sh` or `deploy-root.sh`) will reseed your database every time you run it (overwriting data!).
 - For production, consider customizing the script to skip reseeding if you want to preserve data.
+- **For best security and maintainability, use `deploy.sh` as a regular (non-root) user.**
 
 ---
 
@@ -126,8 +134,8 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
    ```
 3. **Connect to your VPS:**
    ```bash
-   ssh root@YOUR_SERVER_IP
-   cd /opt/erepository
+   ssh youruser@YOUR_SERVER_IP
+   cd /var/www/e-repository
    ```
 4. **Pull the latest code:**
    ```bash
@@ -135,7 +143,7 @@ This guide explains how to **run**, **update**, and **stop** your E-Repository a
    ```
 5. **Redeploy your app:**
    ```bash
-   ./deploy-root.sh
+   ./deploy.sh
    ```
    - This will rebuild, restart, and reseed the database (overwriting data!).
 
@@ -177,6 +185,22 @@ If you want to update your code but **keep your existing data** (no reseed):
     docker compose --env-file env.production up -d
     ```
 - This ensures you never run with missing or insecure secrets/passwords.
+
+---
+
+## 11. 🛠️ Troubleshooting
+
+- **Missing venv or Python errors:**
+  - If you see errors like `No such file or directory: 'venv/bin/python3'`, re-run the deployment script to ensure the virtual environment is created after cloning.
+  - Make sure the script block for venv creation and dependency installation runs after the repository is cloned or updated.
+- **Missing setup.sh:**
+  - If you see `chmod: cannot access 'setup.sh'`, ensure the repository was cloned successfully and contains all files.
+  - You may need to fully clean the directory (including hidden files) and re-clone.
+- **Cloning errors:**
+  - If `git clone` fails due to a non-empty directory, remove all files (including hidden ones) before cloning:
+    ```bash
+    rm -rf * .[^.]*
+    ```
 
 ---
 
