@@ -12,7 +12,7 @@ INSERT INTO users (
     is_approved
 ) VALUES (
     'admin@example.com',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', -- bcrypt hash of 'admin123'
+    '$2a$12$VXBXn4uVVZ/zNmW4OE26YuJ8wDru40dgD.4J6YbP3/eubtasPhmhi', -- bcrypt hash of 'admin123'
     'System Administrator',
     'admin',
     'lecturer',
