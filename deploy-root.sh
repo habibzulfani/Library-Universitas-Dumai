@@ -98,6 +98,12 @@ JWT_SECRET=$(openssl rand -base64 64 | tr -d '\n')
 sed -i "s|CHANGE_THIS_TO_SECURE_PASSWORD|$MYSQL_ROOT_PASSWORD|g" .env
 sed -i "s|CHANGE_THIS_TO_VERY_SECURE_JWT_SECRET_KEY|$JWT_SECRET|g" .env
 
+# === Transfer frontend environment variables ===
+print_status "Syncing frontend environment variables..."
+grep '^NEXT_PUBLIC_' .env > frontend/.env
+print_success "frontend/.env updated from root .env"
+# ================
+
 # Step 9: Start services
 print_status "Starting services..."
 docker compose up -d

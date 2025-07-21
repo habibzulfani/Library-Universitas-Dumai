@@ -134,6 +134,12 @@ print_success "MySQL Root Password: $MYSQL_ROOT_PASSWORD"
 print_success "MySQL User Password: $MYSQL_PASSWORD"
 print_success "JWT Secret: $JWT_SECRET"
 
+# === Transfer frontend environment variables ===
+print_status "Syncing frontend environment variables..."
+grep '^NEXT_PUBLIC_' .env > frontend/.env
+print_success "frontend/.env updated from root .env"
+# ================
+
 # Step 10: Create Nginx configuration
 print_status "Setting up Nginx configuration..."
 sudo tee /etc/nginx/sites-available/e-repository > /dev/null <<EOF
