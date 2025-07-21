@@ -119,6 +119,14 @@ fi
 cp env.production .env
 print_success ".env updated from env.production"
 
+# Ensure BASE_URL is set to the server's public IP
+SERVER_IP=$(curl -s ifconfig.me)
+if grep -q '^BASE_URL=' .env; then
+  sed -i "s|^BASE_URL=.*|BASE_URL=http://$SERVER_IP:8080|" .env
+else
+  echo "BASE_URL=http://$SERVER_IP:8080" >> .env
+fi
+
 # Step 9.5: Generate secure passwords and update .env
 print_status "Generating secure passwords..."
 MYSQL_ROOT_PASSWORD=$(openssl rand -base64 32 | tr -d '\n')

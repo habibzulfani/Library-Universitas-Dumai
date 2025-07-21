@@ -45,6 +45,7 @@ services:
       - DB_NAME=${DB_NAME:?err}
       - JWT_SECRET=${JWT_SECRET:?err}
       - JWT_EXPIRATION=${JWT_EXPIRATION:?err}
+      - BASE_URL=${BASE_URL:?err}
     volumes:
       - ./uploads:/app/uploads
     depends_on:
