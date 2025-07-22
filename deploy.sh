@@ -120,7 +120,7 @@ cp env.production .env
 print_success ".env updated from env.production"
 
 # Ensure BASE_URL is set to the server's public IP
-SERVER_IP=$(curl -s ifconfig.me)
+SERVER_IP=$(curl -4 -s ifconfig.me)
 if grep -q '^BASE_URL=' .env; then
   sed -i "s|^BASE_URL=.*|BASE_URL=http://$SERVER_IP:8080|" .env
 else
