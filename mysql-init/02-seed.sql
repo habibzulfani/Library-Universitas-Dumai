@@ -8,6 +8,7 @@ INSERT INTO users (
     user_type,
     nim_nidn,
     faculty,
+    department_id,
     email_verified,
     is_approved
 ) VALUES (
@@ -18,6 +19,7 @@ INSERT INTO users (
     'lecturer',
     'ADMIN001',
     'Fakultas Ilmu Komputer',
+    2,
     TRUE,
     TRUE
 ); 
